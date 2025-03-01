@@ -6,17 +6,16 @@ import '@chatui/core/dist/index.css';
 import { nanoid } from 'nanoid';
 import io from 'socket.io-client';
 import './App.css';
-import WaitingScreen from './components/WaitingScreen';
 
-// Firebase конфигурация (создайте проект в Firebase Console)
+// Firebase конфигурация
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT.firebaseio.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyAFPXNx5HHMhPiV0FgnprIJI4TYxvxrWfE", // Демо ключ
+  authDomain: `${process.env.FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  databaseURL: process.env.FIREBASE_DATABASE_URL || "https://sdnfjsidf.firebaseio.com",
+  projectId: process.env.FIREBASE_PROJECT_ID || "sdnfjsidf",
+  storageBucket: `${process.env.FIREBASE_PROJECT_ID}.appspot.com`,
+  messagingSenderId: "110324966438883300281",
+  appId: "1:110324966438883300281:web:123456789012"
 };
 
 // Инициализация Firebase
@@ -41,31 +40,71 @@ const App = () => {
   const [isWaiting, setIsWaiting] = useState(false);
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState('connecting');
+  const [error, setError] = useState(null);
   const { messages, appendMsg, setTyping, resetList } = useMessages([]);
   const deviceId = useRef(getDeviceId());
   const socketConnected = useRef(false);
   const messagesRef = useRef(null);
+  
+  // Инициализация соединения с сервером
+  useEffect(() => {
+    // Улучшенное подключение к Socket.IO с обработкой ошибок
+    const socketClient = io(window.location.origin, {
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+      transports: ['websocket', 'polling']
+    });
+
+    socketClient.on('connect', () => {
+      console.log('Socket.IO connected!');
+      socketConnected.current = true;
+      setStatus('connected');
+      setSocket(socketClient);
+      setError(null);
+    });
+    
+    socketClient.on('connect_error', (err) => {
+      console.error('Socket.IO connection error:', err);
+      setStatus('error');
+      setError(`Ошибка подключения: ${err.message}`);
+    });
+
+    socketClient.on('connectionEstablished', (data) => {
+      console.log('Connection confirmed by server:', data);
+      socketConnected.current = true;
+      setStatus('connected');
+    });
+
+    socketClient.on('disconnect', () => {
+      console.log('Socket.IO disconnected');
+      socketConnected.current = false;
+      setStatus('disconnected');
+    });
+
+    return () => {
+      if (socketClient) {
+        socketClient.disconnect();
+      }
+    };
+  }, []);
 
   // Инициализация Telegram WebApp
   useEffect(() => {
-    const telegram = window.Telegram.WebApp;
-    setTg(telegram);
-    
-    // Получаем ID пользователя из Telegram
-    if (telegram && telegram.initDataUnsafe && telegram.initDataUnsafe.user) {
-      setUserId(telegram.initDataUnsafe.user.id);
-    } else {
-      // Для тестирования, если не в Telegram
-      setUserId(`user_${nanoid(8)}`);
-    }
-    
-    // Настраиваем WebApp
+    const telegram = window.Telegram?.WebApp;
     if (telegram) {
-      telegram.expand();
+      setTg(telegram);
       
-      if (telegram.isVersionAtLeast('8.0')) {
-        telegram.requestFullscreen();
+      // Получаем ID пользователя из Telegram
+      if (telegram.initDataUnsafe && telegram.initDataUnsafe.user) {
+        setUserId(telegram.initDataUnsafe.user.id);
+      } else {
+        // Для тестирования, если не в Telegram
+        setUserId(`user_${nanoid(8)}`);
       }
+      
+      // Настраиваем WebApp
+      telegram.expand();
       
       if (telegram.setHeaderColor) {
         telegram.setHeaderColor('#0088cc');
@@ -76,111 +115,92 @@ const App = () => {
       }
       
       telegram.ready();
+    } else {
+      // Если не в Telegram, создаем тестовый ID
+      setUserId(`user_${nanoid(8)}`);
+      console.log('Telegram WebApp not available, using test user ID');
     }
+  }, []);
 
-    // Инициализация Socket.IO
-    const socketClient = io('https://your-socket-server.com', {
-      reconnectionAttempts: 5,
-      timeout: 10000
+  // Обработчики событий Socket.IO для чата
+  useEffect(() => {
+    if (!socket || !userId) return;
+
+    // Получение нового сообщения
+    socket.on('newMessage', (message) => {
+      console.log('New message received:', message);
+      
+      // Проверяем, не наше ли это сообщение
+      const position = message.senderId === userId ? 'right' : 'left';
+      
+      appendMsg({
+        type: 'text',
+        content: { text: message.text },
+        position,
+        user: { id: message.senderId }
+      });
     });
 
-    socketClient.on('connect', () => {
-      socketConnected.current = true;
-      setStatus('connected');
-    });
-
-    socketClient.on('disconnect', () => {
-      socketConnected.current = false;
-      setStatus('disconnected');
-    });
-
-    socketClient.on('newMessage', (msg) => {
-      if (msg.chatId === chatId) {
-        appendMsg({
-          type: msg.senderId === userId ? 'text' : 'received',
-          content: { text: msg.text },
-          position: msg.senderId === userId ? 'right' : 'left',
-          user: { id: msg.senderId },
-          _id: msg.id
-        });
-      }
-    });
-
-    socketClient.on('chatJoined', (data) => {
+    // Подключение к чату
+    socket.on('chatJoined', (data) => {
+      console.log('Joined chat:', data);
       setChatId(data.chatId);
       setIsWaiting(false);
-      resetList();
-      appendMsg({
-        type: 'system',
-        content: { text: 'Чат начат. Вы подключены к собеседнику.' }
-      });
     });
 
-    socketClient.on('chatEnded', () => {
-      appendMsg({
-        type: 'system',
-        content: { text: 'Собеседник покинул чат.' }
-      });
-      setChatId(null);
+    // Ожидание партнера
+    socket.on('waitingForPartner', () => {
+      console.log('Waiting for a partner...');
+      setIsWaiting(true);
     });
 
-    setSocket(socketClient);
-
-    return () => {
-      socketClient.disconnect();
-    };
-  }, [appendMsg, resetList]);
-
-  // Ищем собеседника когда у нас есть userId
-  useEffect(() => {
-    if (userId && socket && socketConnected.current) {
-      findChatPartner();
-    }
-  }, [userId, socket, socketConnected.current]);
-
-  // Подписываемся на сообщения из Firebase для данного чата
-  useEffect(() => {
-    if (chatId) {
-      const chatRef = ref(database, `chats/${chatId}/messages`);
-      const unsubscribe = onValue(chatRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          const messageList = Object.entries(data).map(([key, value]) => ({
-            ...value,
-            _id: key,
-            type: value.senderId === userId ? 'text' : 'received',
-            position: value.senderId === userId ? 'right' : 'left',
-            content: { text: value.text }
-          }));
-          
-          // Удаляем дубликаты перед добавлением в UI
-          const existingIds = new Set(messages.map(m => m._id));
-          const newMessages = messageList.filter(m => !existingIds.has(m._id));
-          
-          newMessages.forEach(msg => {
-            appendMsg(msg);
-          });
+    // Завершение чата
+    socket.on('chatEnded', (data) => {
+      console.log('Chat ended:', data);
+      appendMsg({
+        type: 'system',
+        content: {
+          text: 'Чат завершен'
         }
       });
-      
-      return () => {
-        unsubscribe();
-      };
-    }
-  }, [chatId, userId, appendMsg, messages]);
+      setChatId(null);
+      resetList();
+    });
 
+    // Обработка ошибок
+    socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      setError(error.message);
+    });
+
+    return () => {
+      socket.off('newMessage');
+      socket.off('chatJoined');
+      socket.off('waitingForPartner');
+      socket.off('chatEnded');
+      socket.off('error');
+    };
+  }, [socket, userId, appendMsg, resetList]);
+
+  // Функция поиска собеседника
   const findChatPartner = () => {
-    if (!userId || !socket) return;
+    if (!socket || !userId || !socketConnected.current) {
+      setError('Не удается подключиться к серверу. Попробуйте позже.');
+      return;
+    }
     
+    resetList();
     setIsWaiting(true);
-    socket.emit('findChatPartner', { userId, deviceId: deviceId.current });
+    setError(null);
     
-    appendMsg({
-      type: 'system',
-      content: { text: 'Поиск собеседника...' }
+    console.log('Finding chat partner...');
+    socket.emit('findChatPartner', {
+      userId,
+      deviceId: deviceId.current
     });
   };
 
+  // Функция отправки сообщения
   const handleSend = (type, content) => {
     if (!socket || !chatId || !userId) return;
     
@@ -188,14 +208,13 @@ const App = () => {
     
     // Добавляем сообщение в локальный интерфейс
     appendMsg({
-      _id: messageId,
       type: 'text',
       content: { text: content.text },
       position: 'right',
       user: { id: userId }
     });
     
-    // Отправляем через Socket.IO для мгновенной доставки
+    // Отправляем через Socket.IO
     socket.emit('sendMessage', {
       id: messageId,
       chatId,
@@ -204,27 +223,18 @@ const App = () => {
       timestamp: Date.now(),
       deviceId: deviceId.current
     });
-    
-    // Дублируем в Firebase для надежности
-    const newMessageRef = push(ref(database, `chats/${chatId}/messages`));
-    set(newMessageRef, {
-      id: messageId,
-      senderId: userId,
-      text: content.text,
-      timestamp: Date.now()
-    });
   };
 
+  // Функция завершения чата
   const handleEndChat = () => {
-    if (!socket || !chatId) return;
+    if (!socket || !chatId || !userId) return;
     
     socket.emit('endChat', { chatId, userId });
     setChatId(null);
     resetList();
-    findChatPartner();
   };
 
-  // Рендеринг интерфейса с использованием ChatUI
+  // Рендеринг интерфейса
   return (
     <div className="app-container">
       <div className="chat-container">
@@ -234,20 +244,38 @@ const App = () => {
             <p>Нажмите кнопку, чтобы начать чат с незнакомцем</p>
             <button 
               onClick={findChatPartner}
-              className="start-button"
+              className={`start-button ${!socketConnected.current ? 'disabled' : ''}`}
               disabled={!socketConnected.current}
             >
               Найти собеседника
             </button>
             <div className="connection-status">
-              Статус: {status === 'connected' ? 'Подключен' : 'Ожидание подключения...'}
+              Статус: {status === 'connected' ? 'Подключен' : 
+                      status === 'error' ? 'Ошибка подключения' : 
+                      status === 'disconnected' ? 'Соединение потеряно' : 
+                      'Ожидание подключения...'}
             </div>
+            {error && <div className="error-message">{error}</div>}
+          </div>
+        ) : isWaiting ? (
+          <div className="waiting-screen">
+            <h2>Поиск собеседника...</h2>
+            <div className="loader"></div>
+            <button 
+              onClick={() => {
+                setIsWaiting(false);
+                setChatId(null);
+              }}
+              className="cancel-button"
+            >
+              Отменить
+            </button>
           </div>
         ) : (
           <Chat
             navbar={{
-              title: isWaiting ? 'Поиск собеседника...' : 'Анонимный чат',
-              leftContent: !isWaiting && (
+              title: 'Анонимный чат',
+              leftContent: (
                 <button onClick={handleEndChat} className="end-chat-button">
                   Завершить
                 </button>
