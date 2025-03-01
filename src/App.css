@@ -7,6 +7,11 @@
   font-family: 'Roboto', sans-serif;
   max-width: 100%;
   overflow-x: hidden;
+  position: fixed; /* Фиксируем приложение */
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 .app-header {
@@ -21,6 +26,7 @@
   display: flex;
   justify-content: center;
   align-items: center;
+  padding-top: env(safe-area-inset-top, 10px);
 }
 
 .app-header h1 {
@@ -35,6 +41,7 @@
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  height: calc(100% - 50px); /* Вычитаем высоту header */
 }
 
 .loading {

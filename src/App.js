@@ -81,10 +81,10 @@ const App = () => {
       // Сначала получаем все сообщения
       fetchMessages();
       
-      // Запускаем опрос сервера каждые 3 секунды
+      // Запускаем опрос сервера каждые 5 секунд (увеличиваем интервал)
       const interval = setInterval(() => {
         fetchMessages();
-      }, 3000);
+      }, 5000);
       
       setPollingInterval(interval);
       
@@ -139,8 +139,10 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
-        // Фильтруем сообщения, чтобы избежать дублирования
+        // Получаем текущие ID сообщений
         const existingMessageIds = messages.map(msg => msg.id);
+        
+        // Фильтруем только новые сообщения, которые не были добавлены локально
         const newMessages = data.messages
           .filter(msg => !existingMessageIds.includes(msg.id))
           .map(msg => ({
@@ -151,6 +153,7 @@ const App = () => {
           }));
         
         if (newMessages.length > 0) {
+          // Добавляем только новые сообщения
           setMessages(prev => [...prev, ...newMessages]);
           
           // Обновляем ID последнего сообщения
@@ -208,7 +211,9 @@ const App = () => {
       text,
       sender: 'me',
       timestamp: new Date().toISOString(),
-      pending: true // Добавляем статус ожидания отправки
+      pending: true,
+      // Добавляем флаг, чтобы отметить, что это сообщение уже отправлено локально
+      locallyAdded: true
     };
     
     setMessages(prev => [...prev, newMessage]);
@@ -223,7 +228,7 @@ const App = () => {
           chatId,
           userId,
           message: text,
-          messageId // Передаем ID сообщения на сервер
+          messageId
         }),
       });
       
