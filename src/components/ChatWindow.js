@@ -3,24 +3,57 @@ import './ChatWindow.css';
 
 const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
   const [inputText, setInputText] = useState('');
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const chatMessagesRef = useRef(null);
 
   // Автоматическая прокрутка вниз при новых сообщениях
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Фокус на поле ввода при монтировании
+  // Обработка фокуса на поле ввода
   useEffect(() => {
-    inputRef.current?.focus();
+    const handleFocus = () => {
+      setIsKeyboardVisible(true);
+      // Даем время для появления клавиатуры, затем прокручиваем
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 300);
+    };
+
+    const handleBlur = () => {
+      setIsKeyboardVisible(false);
+    };
+
+    const inputElement = inputRef.current;
+    if (inputElement) {
+      inputElement.addEventListener('focus', handleFocus);
+      inputElement.addEventListener('blur', handleBlur);
+    }
+
+    return () => {
+      if (inputElement) {
+        inputElement.removeEventListener('focus', handleFocus);
+        inputElement.removeEventListener('blur', handleBlur);
+      }
+    };
   }, []);
+
+  // Обработка нажатия на область сообщений для скрытия клавиатуры
+  const handleMessagesClick = () => {
+    inputRef.current?.blur();
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (inputText.trim()) {
       onSendMessage(inputText);
       setInputText('');
+      
+      // Фокусируемся на поле ввода после отправки
+      inputRef.current?.focus();
     }
   };
 
@@ -55,7 +88,11 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
 
   return (
     <div className="chat-window">
-      <div className="chat-messages">
+      <div 
+        className="chat-messages" 
+        ref={chatMessagesRef}
+        onClick={handleMessagesClick}
+      >
         {messages.length === 0 ? (
           <div className="empty-chat">
             <div className="empty-chat-icon">💬</div>
@@ -89,21 +126,23 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
         <div ref={messagesEndRef} />
       </div>
       
-      <form className="chat-input" onSubmit={handleSubmit}>
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          placeholder="Введите сообщение..."
-          autoComplete="off"
-        />
-        <button type="submit">Отправить</button>
-      </form>
-      
-      <button className="end-chat-button" onClick={onEndChat}>
-        Завершить чат
-      </button>
+      <div className="chat-input-container">
+        <form className="chat-input" onSubmit={handleSubmit}>
+          <input
+            ref={inputRef}
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder="Введите сообщение..."
+            autoComplete="off"
+          />
+          <button type="submit">Отправить</button>
+        </form>
+        
+        <button className="end-chat-button" onClick={onEndChat}>
+          Завершить чат
+        </button>
+      </div>
     </div>
   );
 };

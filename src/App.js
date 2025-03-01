@@ -81,10 +81,10 @@ const App = () => {
       // Сначала получаем все сообщения
       fetchMessages();
       
-      // Запускаем опрос сервера каждые 5 секунд (увеличиваем интервал)
+      // Запускаем опрос сервера каждые 10 секунд
       const interval = setInterval(() => {
         fetchMessages();
-      }, 5000);
+      }, 10000);
       
       setPollingInterval(interval);
       
@@ -92,6 +92,7 @@ const App = () => {
       return () => {
         if (pollingInterval) {
           clearInterval(pollingInterval);
+          setPollingInterval(null);
         }
       };
     }
@@ -124,6 +125,9 @@ const App = () => {
 
   const fetchMessages = async () => {
     try {
+      // Проверяем, есть ли активный чат и ID пользователя
+      if (!chatId || !userId) return;
+      
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/get-messages', {
         method: 'POST',
         headers: {
@@ -139,12 +143,12 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
-        // Получаем текущие ID сообщений
-        const existingMessageIds = messages.map(msg => msg.id);
+        // Создаем Set из ID существующих сообщений для быстрого поиска
+        const existingMessageIds = new Set(messages.map(msg => msg.id));
         
-        // Фильтруем только новые сообщения, которые не были добавлены локально
+        // Фильтруем только новые сообщения
         const newMessages = data.messages
-          .filter(msg => !existingMessageIds.includes(msg.id))
+          .filter(msg => !existingMessageIds.has(msg.id))
           .map(msg => ({
             id: msg.id,
             text: msg.text,
