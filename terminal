@@ -1,0 +1,5 @@
+mkdir anon-chat-bot
+cd anon-chat-bot
+npm init -y
+npm install express dotenv telegraf cors axios react react-dom
+npm install --save-dev webpack webpack-cli webpack-dev-server babel-loader @babel/core @babel/preset-env @babel/preset-react html-webpack-plugin 

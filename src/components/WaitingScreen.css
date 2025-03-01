@@ -1,0 +1,35 @@
+.waiting-screen {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 5px solid rgba(0, 136, 204, 0.2);
+  border-radius: 50%;
+  border-top-color: #0088cc;
+  animation: spin 1s ease-in-out infinite;
+  margin-bottom: 20px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.waiting-screen h2 {
+  margin: 0 0 10px;
+  color: #0088cc;
+}
+
+.waiting-screen p {
+  color: #666;
+  max-width: 300px;
+} 
