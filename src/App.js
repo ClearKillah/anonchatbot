@@ -27,10 +27,46 @@ const App = () => {
     
     // Настраиваем WebApp
     if (telegram) {
+      // Расширяем приложение на весь экран
       telegram.expand();
+      
+      // Запрашиваем полноэкранный режим, если поддерживается
+      if (telegram.isVersionAtLeast('8.0') && telegram.requestFullscreen) {
+        telegram.requestFullscreen();
+      }
+      
+      // Отключаем вертикальные свайпы для предотвращения случайного закрытия
+      if (telegram.isVersionAtLeast('7.7') && telegram.disableVerticalSwipes) {
+        telegram.disableVerticalSwipes();
+      }
+      
+      // Устанавливаем цвета для лучшего отображения
+      if (telegram.setHeaderColor) {
+        telegram.setHeaderColor('#0088cc');
+      }
+      
+      if (telegram.setBackgroundColor) {
+        telegram.setBackgroundColor('#f5f5f5');
+      }
+      
       telegram.ready();
     }
   }, []);
+
+  // Добавляем обработчик событий для полноэкранного режима
+  useEffect(() => {
+    if (tg && tg.isVersionAtLeast('8.0')) {
+      const handleFullscreenChanged = () => {
+        console.log('Fullscreen mode changed:', tg.isFullscreen);
+      };
+      
+      tg.onEvent('fullscreenChanged', handleFullscreenChanged);
+      
+      return () => {
+        tg.offEvent('fullscreenChanged', handleFullscreenChanged);
+      };
+    }
+  }, [tg]);
 
   useEffect(() => {
     // Ищем собеседника, когда у нас есть userId
@@ -39,13 +75,16 @@ const App = () => {
     }
   }, [userId]);
 
-  // Настраиваем опрос сервера для получения новых сообщений
+  // Оптимизируем интервал опроса
   useEffect(() => {
     if (chatId && userId) {
-      // Запускаем опрос сервера каждые 2 секунды
+      // Сначала получаем все сообщения
+      fetchMessages();
+      
+      // Запускаем опрос сервера каждые 3 секунды
       const interval = setInterval(() => {
         fetchMessages();
-      }, 2000);
+      }, 3000);
       
       setPollingInterval(interval);
       
@@ -57,6 +96,31 @@ const App = () => {
       };
     }
   }, [chatId, userId]);
+
+  // Добавляем обработчики событий активации/деактивации
+  useEffect(() => {
+    if (tg && tg.isVersionAtLeast('8.0')) {
+      const handleActivated = () => {
+        console.log('App activated');
+        // Обновляем сообщения при активации
+        if (chatId && userId) {
+          fetchMessages();
+        }
+      };
+      
+      const handleDeactivated = () => {
+        console.log('App deactivated');
+      };
+      
+      tg.onEvent('activated', handleActivated);
+      tg.onEvent('deactivated', handleDeactivated);
+      
+      return () => {
+        tg.offEvent('activated', handleActivated);
+        tg.offEvent('deactivated', handleDeactivated);
+      };
+    }
+  }, [tg, chatId, userId]);
 
   const fetchMessages = async () => {
     try {
@@ -75,20 +139,25 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
-        // Добавляем новые сообщения
-        const newMessages = data.messages.map(msg => ({
-          id: msg.id,
-          text: msg.text,
-          sender: msg.sender === userId ? 'me' : 'other',
-          timestamp: msg.timestamp
-        }));
+        // Фильтруем сообщения, чтобы избежать дублирования
+        const existingMessageIds = messages.map(msg => msg.id);
+        const newMessages = data.messages
+          .filter(msg => !existingMessageIds.includes(msg.id))
+          .map(msg => ({
+            id: msg.id,
+            text: msg.text,
+            sender: msg.sender === userId ? 'me' : 'other',
+            timestamp: msg.timestamp
+          }));
         
-        setMessages(prev => [...prev, ...newMessages]);
-        
-        // Обновляем ID последнего сообщения
-        const lastMsg = data.messages[data.messages.length - 1];
-        if (lastMsg) {
-          setLastMessageId(lastMsg.id);
+        if (newMessages.length > 0) {
+          setMessages(prev => [...prev, ...newMessages]);
+          
+          // Обновляем ID последнего сообщения
+          const lastMsg = data.messages[data.messages.length - 1];
+          if (lastMsg) {
+            setLastMessageId(lastMsg.id);
+          }
         }
       }
     } catch (error) {
