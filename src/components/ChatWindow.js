@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './ChatWindow.css';
 
-const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
+const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage }) => {
   const [inputText, setInputText] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const messagesEndRef = useRef(null);
@@ -57,6 +57,11 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
     }
   };
 
+  // Добавляем обработчик для повторной отправки сообщений с ошибкой
+  const handleRetry = (messageId) => {
+    onRetryMessage(messageId);
+  };
+
   // Группируем сообщения по отправителю для лучшего отображения
   const groupedMessages = [];
   let currentGroup = null;
@@ -73,12 +78,16 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
     }
   });
 
-  // Функция для отображения статуса сообщения
+  // Обновляем функцию для отображения статуса сообщения
   const renderMessageStatus = (msg) => {
     if (msg.sender !== 'me') return null;
     
     if (msg.error) {
-      return <span className="message-status">⚠️</span>;
+      return (
+        <span className="message-status error" onClick={() => handleRetry(msg.id)}>
+          ⚠️ Повторить
+        </span>
+      );
     } else if (msg.pending) {
       return <span className="message-status">⏳</span>;
     } else {

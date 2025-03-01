@@ -78,7 +78,7 @@ app.post('/api/find-chat-partner', (req, res) => {
 
 // Обновляем API для отправки сообщений
 app.post('/api/send-message', (req, res) => {
-  const { chatId, userId, message, messageId } = req.body;
+  const { chatId, userId, message, clientMessageId } = req.body;
   
   if (!chatId || !userId || !message) {
     return res.status(400).json({ success: false, message: 'Chat ID, User ID and message are required' });
@@ -97,29 +97,28 @@ app.post('/api/send-message', (req, res) => {
   // Находим ID получателя
   const recipientId = participants.find(id => id !== userId);
   
-  // Создаем объект сообщения с переданным ID или генерируем новый
+  // Создаем объект сообщения с серверным ID
   const messageObj = {
-    id: messageId || Date.now(),
+    id: Date.now(), // Серверный ID
     text: message,
     sender: userId,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    clientMessageId // Сохраняем клиентский ID для отслеживания
   };
   
-  // Проверяем, не существует ли уже сообщение с таким ID
+  // Проверяем, не существует ли уже сообщение с таким клиентским ID
+  let messageExists = false;
+  
   if (chatMessages.has(chatId)) {
     const existingMessages = chatMessages.get(chatId);
-    const messageExists = existingMessages.some(msg => msg.id === messageObj.id);
+    messageExists = existingMessages.some(msg => 
+      msg.clientMessageId === clientMessageId || 
+      (msg.text === message && msg.sender === userId && 
+       Math.abs(new Date(msg.timestamp) - new Date(messageObj.timestamp)) < 5000)
+    );
     
     if (!messageExists) {
       chatMessages.get(chatId).push(messageObj);
-    } else {
-      // Если сообщение с таким ID уже существует, просто возвращаем успех
-      return res.status(200).json({ 
-        success: true, 
-        message: 'Message already sent', 
-        recipientId,
-        messageObj
-      });
     }
   } else {
     chatMessages.set(chatId, [messageObj]);
@@ -127,7 +126,7 @@ app.post('/api/send-message', (req, res) => {
   
   return res.status(200).json({ 
     success: true, 
-    message: 'Message sent', 
+    message: messageExists ? 'Message already sent' : 'Message sent', 
     recipientId,
     messageObj
   });

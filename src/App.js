@@ -75,15 +75,27 @@ const App = () => {
     }
   }, [userId]);
 
-  // Оптимизируем интервал опроса
+  // Оптимизируем интервал опроса с дебаунсингом
   useEffect(() => {
     if (chatId && userId) {
+      // Переменная для отслеживания, выполняется ли запрос в данный момент
+      let isFetching = false;
+      
+      // Функция для получения сообщений с дебаунсингом
+      const fetchMessagesWithDebounce = async () => {
+        if (isFetching) return;
+        
+        isFetching = true;
+        await fetchMessages();
+        isFetching = false;
+      };
+      
       // Сначала получаем все сообщения
-      fetchMessages();
+      fetchMessagesWithDebounce();
       
       // Запускаем опрос сервера каждые 10 секунд
       const interval = setInterval(() => {
-        fetchMessages();
+        fetchMessagesWithDebounce();
       }, 10000);
       
       setPollingInterval(interval);
@@ -143,17 +155,43 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
-        // Создаем Set из ID существующих сообщений для быстрого поиска
-        const existingMessageIds = new Set(messages.map(msg => msg.id));
+        // Создаем Map из существующих сообщений для быстрого поиска
+        const existingMessagesMap = new Map();
+        
+        messages.forEach(msg => {
+          // Сохраняем как по ID, так и по тексту+времени для поиска дубликатов
+          existingMessagesMap.set(msg.id, true);
+          
+          // Для сообщений с временными ID также проверяем текст и примерное время
+          if (msg.locallyAdded) {
+            const key = `${msg.text}_${new Date(msg.timestamp).getTime()}`;
+            existingMessagesMap.set(key, true);
+          }
+        });
         
         // Фильтруем только новые сообщения
         const newMessages = data.messages
-          .filter(msg => !existingMessageIds.has(msg.id))
+          .filter(serverMsg => {
+            // Проверяем, нет ли сообщения с таким ID
+            if (existingMessagesMap.has(serverMsg.id)) return false;
+            
+            // Проверяем, нет ли локального сообщения с таким же текстом и близким временем
+            const msgTime = new Date(serverMsg.timestamp).getTime();
+            
+            // Проверяем в диапазоне ±5 секунд для учета разницы в часах
+            for (let i = -5; i <= 5; i++) {
+              const timeKey = `${serverMsg.text}_${msgTime + i * 1000}`;
+              if (existingMessagesMap.has(timeKey)) return false;
+            }
+            
+            return true;
+          })
           .map(msg => ({
             id: msg.id,
             text: msg.text,
             sender: msg.sender === userId ? 'me' : 'other',
-            timestamp: msg.timestamp
+            timestamp: msg.timestamp,
+            serverConfirmed: true
           }));
         
         if (newMessages.length > 0) {
@@ -206,8 +244,8 @@ const App = () => {
   const sendMessage = async (text) => {
     if (!text.trim() || !chatId) return;
     
-    // Генерируем уникальный ID для сообщения
-    const messageId = Date.now();
+    // Генерируем уникальный ID для сообщения с префиксом для отличия от серверных ID
+    const messageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     // Добавляем сообщение локально
     const newMessage = {
@@ -220,6 +258,7 @@ const App = () => {
       locallyAdded: true
     };
     
+    // Добавляем сообщение в локальный стейт
     setMessages(prev => [...prev, newMessage]);
     
     try {
@@ -232,22 +271,27 @@ const App = () => {
           chatId,
           userId,
           message: text,
-          messageId
+          clientMessageId: messageId // Передаем клиентский ID сообщения
         }),
       });
       
       const data = await response.json();
       
       if (data.success) {
-        // Обновляем статус сообщения на отправленное
+        // Обновляем локальное сообщение, заменяя клиентский ID на серверный
         setMessages(prev => 
           prev.map(msg => 
-            msg.id === messageId ? { ...msg, pending: false } : msg
+            msg.id === messageId ? { 
+              ...msg, 
+              id: data.messageObj.id, // Используем ID с сервера
+              pending: false,
+              serverConfirmed: true
+            } : msg
           )
         );
         
-        // Устанавливаем ID последнего сообщения только после успешной отправки
-        setLastMessageId(messageId);
+        // Устанавливаем ID последнего сообщения
+        setLastMessageId(data.messageObj.id);
       } else {
         console.error('Error sending message:', data.message);
         // Помечаем сообщение как не отправленное
@@ -293,6 +337,72 @@ const App = () => {
       }
     } catch (error) {
       console.error('Error ending chat:', error);
+    }
+  };
+
+  // Добавляем функцию для повторной отправки сообщений с ошибкой
+  const retryMessage = async (messageId) => {
+    // Находим сообщение с ошибкой
+    const messageToRetry = messages.find(msg => msg.id === messageId && msg.error);
+    
+    if (!messageToRetry) return;
+    
+    // Обновляем статус сообщения на "отправляется"
+    setMessages(prev => 
+      prev.map(msg => 
+        msg.id === messageId ? { ...msg, error: false, pending: true } : msg
+      )
+    );
+    
+    try {
+      const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chatId,
+          userId,
+          message: messageToRetry.text,
+          clientMessageId: messageId
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Обновляем локальное сообщение, заменяя клиентский ID на серверный
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === messageId ? { 
+              ...msg, 
+              id: data.messageObj.id, // Используем ID с сервера
+              pending: false,
+              error: false,
+              serverConfirmed: true
+            } : msg
+          )
+        );
+        
+        // Устанавливаем ID последнего сообщения
+        setLastMessageId(data.messageObj.id);
+      } else {
+        console.error('Error retrying message:', data.message);
+        // Помечаем сообщение как не отправленное
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === messageId ? { ...msg, error: true, pending: false } : msg
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Error retrying message:', error);
+      // Помечаем сообщение как не отправленное
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === messageId ? { ...msg, error: true, pending: false } : msg
+        )
+      );
     }
   };
 

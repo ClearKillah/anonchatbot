@@ -120,6 +120,17 @@
   color: #f44336;
 }
 
+.message-status.error {
+  color: #f44336;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 0.8rem;
+}
+
+.message-status.error:hover {
+  color: #d32f2f;
+}
+
 .chat-input-container {
   position: fixed;
   bottom: 0;
