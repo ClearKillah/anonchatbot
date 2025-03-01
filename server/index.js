@@ -6,6 +6,8 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// Статические файлы из директории build (если они есть)
 app.use(express.static(path.join(__dirname, '../build')));
 
 const messages = [];
@@ -24,7 +26,12 @@ app.post('/messages', (req, res) => {
   res.json(message);
 });
 
-// Serve React app
+// Простая страница для проверки работы сервера
+app.get('/', (req, res) => {
+  res.send('Telegram Chat Bot API is running');
+});
+
+// Обработка других маршрутов
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../build', 'index.html'));
 });
