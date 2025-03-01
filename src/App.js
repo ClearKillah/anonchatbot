@@ -234,6 +234,31 @@ const App = () => {
     resetList();
   };
 
+  // Добавьте в самое начало компонента App
+  useEffect(() => {
+    // Диагностика соединения
+    console.log("App mounting, running diagnostics...");
+    
+    // 1. Проверяем Firebase
+    try {
+      const testRef = ref(database, 'test');
+      set(testRef, {
+        timestamp: Date.now(),
+        test: 'Connection test'
+      })
+      .then(() => console.log("Firebase connection successful"))
+      .catch(err => console.error("Firebase connection failed:", err));
+    } catch (e) {
+      console.error("Firebase test error:", e);
+    }
+    
+    // 2. Проверяем Socket.IO вручную
+    fetch('/api/status')
+      .then(res => res.json())
+      .then(data => console.log("API status:", data))
+      .catch(err => console.error("API connection failed:", err));
+  }, []);
+
   // Рендеринг интерфейса
   return (
     <div className="app-container">

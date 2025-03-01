@@ -40,8 +40,10 @@ app.use(cors({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// Инициализация бота
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// Изменяем инициализацию бота для предотвращения конфликтов
+const bot = new Telegraf(process.env.BOT_TOKEN, {
+  handlerTimeout: 90000, // увеличиваем таймаут для обработчиков
+});
 
 // Хранилища для чатов и пользователей
 const waitingUsers = [];
@@ -292,27 +294,83 @@ bot.start((ctx) => {
 });
 
 // Настраиваем роутинг для SPA
+app.get('/diagnostic', (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Diagnostic</title></head>
+      <body>
+        <h1>Diagnostic Information</h1>
+        <ul>
+          <li>Server Time: ${new Date().toISOString()}</li>
+          <li>Uptime: ${process.uptime()} seconds</li>
+          <li>Memory Usage: ${JSON.stringify(process.memoryUsage())}</li>
+          <li>Active Chats: ${activeChats.size}</li>
+          <li>Waiting Users: ${waitingUsers.length}</li>
+          <li>Connected Sockets: ${Object.keys(io.sockets.sockets).length}</li>
+        </ul>
+      </body>
+    </html>
+  `);
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// Запуск сервера и бота
-const PORT = process.env.PORT || 3000;
+// Запуск сервера и бота с обработкой ошибок
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  bot.launch().then(() => {
-    console.log('Bot is running');
-  }).catch(err => {
-    console.error('Failed to start bot:', err);
-  });
+  
+  // Добавляем задержку перед запуском бота
+  setTimeout(() => {
+    // Запуск бота в режиме webhook для предотвращения конфликтов
+    if (process.env.NODE_ENV === 'production') {
+      // Режим webhook для продакшена
+      bot.telegram.setWebhook(`${process.env.WEBAPP_URL}/bot${process.env.BOT_TOKEN}`)
+        .then(() => {
+          console.log('Webhook set successfully');
+          
+          // Настраиваем обработчик webhook
+          app.use(bot.webhookCallback(`/bot${process.env.BOT_TOKEN}`));
+        })
+        .catch(err => {
+          console.error('Failed to set webhook:', err);
+          
+          // Fallback на polling с отключением предыдущих соединений
+          bot.telegram.deleteWebhook({ drop_pending_updates: true })
+            .then(() => {
+              console.log('Falling back to polling mode');
+              bot.launch({ dropPendingUpdates: true })
+                .catch(err => console.error('Failed to start bot in polling mode:', err));
+            });
+        });
+    } else {
+      // Режим polling для разработки
+      bot.launch({ dropPendingUpdates: true })
+        .then(() => console.log('Bot started in polling mode'))
+        .catch(err => console.error('Failed to start bot:', err));
+    }
+  }, 3000); // 3 секунды задержки, чтобы убедиться, что предыдущие соединения закрыты
 });
 
-// Обработка остановки приложения
-process.once('SIGINT', () => {
-  bot.stop('SIGINT');
-  server.close();
-});
-process.once('SIGTERM', () => {
+// Измененная обработка остановки приложения
+const gracefulShutdown = () => {
+  console.log('Shutting down gracefully...');
+  
+  // Сначала останавливаем бота
   bot.stop('SIGTERM');
-  server.close();
-}); 
+  
+  // Затем закрываем соединения и сервер с таймаутом
+  setTimeout(() => {
+    io.close();
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  }, 1000);
+};
+
+// Обработка сигналов остановки
+process.once('SIGINT', gracefulShutdown);
+process.once('SIGTERM', gracefulShutdown); 
