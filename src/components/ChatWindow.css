@@ -21,17 +21,27 @@
   padding: 0 20px;
 }
 
+.message-group {
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.message-group-sent {
+  align-items: flex-end;
+}
+
+.message-group-received {
+  align-items: flex-start;
+}
+
 .message {
-  margin-bottom: 10px;
+  margin-bottom: 2px;
   display: flex;
 }
 
-.message-sent {
-  justify-content: flex-end;
-}
-
-.message-received {
-  justify-content: flex-start;
+.message:last-child {
+  margin-bottom: 8px;
 }
 
 .message-bubble {

@@ -18,6 +18,22 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
     }
   };
 
+  // Группируем сообщения по отправителю для лучшего отображения
+  const groupedMessages = [];
+  let currentGroup = null;
+
+  messages.forEach((msg) => {
+    if (!currentGroup || currentGroup.sender !== msg.sender) {
+      currentGroup = {
+        sender: msg.sender,
+        messages: [msg]
+      };
+      groupedMessages.push(currentGroup);
+    } else {
+      currentGroup.messages.push(msg);
+    }
+  });
+
   return (
     <div className="chat-window">
       <div className="chat-messages">
@@ -26,17 +42,24 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat }) => {
             <p>Начните общение! Ваш собеседник анонимен.</p>
           </div>
         ) : (
-          messages.map((msg) => (
+          groupedMessages.map((group, groupIndex) => (
             <div 
-              key={msg.id} 
-              className={`message ${msg.sender === 'me' ? 'message-sent' : 'message-received'}`}
+              key={groupIndex} 
+              className={`message-group ${group.sender === 'me' ? 'message-group-sent' : 'message-group-received'}`}
             >
-              <div className="message-bubble">
-                <p>{msg.text}</p>
-                <span className="message-time">
-                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
+              {group.messages.map((msg) => (
+                <div 
+                  key={msg.id} 
+                  className={`message ${group.sender === 'me' ? 'message-sent' : 'message-received'}`}
+                >
+                  <div className="message-bubble">
+                    <p>{msg.text}</p>
+                    <span className="message-time">
+                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           ))
         )}

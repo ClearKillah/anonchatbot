@@ -15,9 +15,10 @@ app.use(express.static(path.join(__dirname, 'dist')));
 // Инициализация бота
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Хранилище для анонимных чатов
+// Хранилище для анонимных чатов и сообщений
 const activeChats = new Map();
 const waitingUsers = [];
+const chatMessages = new Map(); // Хранилище сообщений для каждого чата
 
 // Обработка команды /start
 bot.start((ctx) => {
@@ -96,12 +97,61 @@ app.post('/api/send-message', (req, res) => {
   // Находим ID получателя
   const recipientId = participants.find(id => id !== userId);
   
-  // В реальном приложении здесь бы отправлялось сообщение через бота
-  // Для демонстрации просто возвращаем успех
+  // Создаем объект сообщения
+  const messageObj = {
+    id: Date.now(),
+    text: message,
+    sender: userId,
+    timestamp: new Date().toISOString()
+  };
+  
+  // Сохраняем сообщение в хранилище
+  if (!chatMessages.has(chatId)) {
+    chatMessages.set(chatId, []);
+  }
+  chatMessages.get(chatId).push(messageObj);
+  
   return res.status(200).json({ 
     success: true, 
     message: 'Message sent', 
-    recipientId 
+    recipientId,
+    messageObj
+  });
+});
+
+// Новый API для получения сообщений
+app.post('/api/get-messages', (req, res) => {
+  const { chatId, userId, lastMessageId } = req.body;
+  
+  if (!chatId || !userId) {
+    return res.status(400).json({ success: false, message: 'Chat ID and User ID are required' });
+  }
+  
+  const participants = activeChats.get(chatId);
+  
+  if (!participants) {
+    return res.status(404).json({ success: false, message: 'Chat not found' });
+  }
+  
+  if (!participants.includes(userId)) {
+    return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
+  }
+  
+  // Получаем сообщения для данного чата
+  const messages = chatMessages.get(chatId) || [];
+  
+  // Если указан lastMessageId, возвращаем только новые сообщения
+  let newMessages = messages;
+  if (lastMessageId) {
+    const lastIndex = messages.findIndex(msg => msg.id === parseInt(lastMessageId));
+    if (lastIndex !== -1) {
+      newMessages = messages.slice(lastIndex + 1);
+    }
+  }
+  
+  return res.status(200).json({ 
+    success: true, 
+    messages: newMessages
   });
 });
 
@@ -123,8 +173,9 @@ app.post('/api/end-chat', (req, res) => {
     return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
   }
   
-  // Удаляем чат
+  // Удаляем чат и его сообщения
   activeChats.delete(chatId);
+  chatMessages.delete(chatId);
   
   return res.status(200).json({ 
     success: true, 

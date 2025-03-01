@@ -8,7 +8,9 @@ const App = () => {
   const [chatId, setChatId] = useState(null);
   const [isWaiting, setIsWaiting] = useState(false);
   const [messages, setMessages] = useState([]);
+  const [lastMessageId, setLastMessageId] = useState(null);
   const [tg, setTg] = useState(null);
+  const [pollingInterval, setPollingInterval] = useState(null);
 
   useEffect(() => {
     // Инициализация Telegram WebApp
@@ -37,6 +39,63 @@ const App = () => {
     }
   }, [userId]);
 
+  // Настраиваем опрос сервера для получения новых сообщений
+  useEffect(() => {
+    if (chatId && userId) {
+      // Запускаем опрос сервера каждые 2 секунды
+      const interval = setInterval(() => {
+        fetchMessages();
+      }, 2000);
+      
+      setPollingInterval(interval);
+      
+      // Очищаем интервал при размонтировании
+      return () => {
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+        }
+      };
+    }
+  }, [chatId, userId]);
+
+  const fetchMessages = async () => {
+    try {
+      const response = await fetch('https://anonchatbot-production.up.railway.app/api/get-messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chatId,
+          userId,
+          lastMessageId: lastMessageId
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success && data.messages && data.messages.length > 0) {
+        // Добавляем новые сообщения
+        const newMessages = data.messages.map(msg => ({
+          id: msg.id,
+          text: msg.text,
+          sender: msg.sender === userId ? 'me' : 'other',
+          timestamp: msg.timestamp
+        }));
+        
+        setMessages(prev => [...prev, ...newMessages]);
+        
+        // Обновляем ID последнего сообщения
+        const lastMsg = data.messages[data.messages.length - 1];
+        if (lastMsg) {
+          setLastMessageId(lastMsg.id);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  };
+
   const findChatPartner = async () => {
     try {
       setIsWaiting(true);
@@ -54,6 +113,8 @@ const App = () => {
         if (data.chatId) {
           setChatId(data.chatId);
           setIsWaiting(false);
+          setMessages([]); // Очищаем сообщения при новом чате
+          setLastMessageId(null); // Сбрасываем ID последнего сообщения
         } else if (data.waiting) {
           // Продолжаем ждать и периодически проверяем
           setTimeout(findChatPartner, 3000);
@@ -78,6 +139,7 @@ const App = () => {
     };
     
     setMessages(prev => [...prev, newMessage]);
+    setLastMessageId(newMessage.id);
     
     try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
@@ -119,6 +181,12 @@ const App = () => {
       setChatId(null);
       setMessages([]);
       findChatPartner();
+      
+      // Очищаем интервал опроса при завершении чата
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        setPollingInterval(null);
+      }
     } catch (error) {
       console.error('Error ending chat:', error);
     }
