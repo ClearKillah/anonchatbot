@@ -4,19 +4,14 @@ FROM node:18
 # Создаем директорию приложения
 WORKDIR /app
 
-# Копируем package.json файлы
-COPY package*.json ./
-COPY server/package*.json ./server/
+# Копируем только серверную часть
+COPY server ./server
 
-# Устанавливаем зависимости
-RUN npm install
+# Устанавливаем зависимости для сервера
 RUN cd server && npm install
 
-# Копируем исходный код
-COPY . .
-
-# Собираем React приложение
-RUN npm run build
+# Копируем собранное React приложение (если оно у вас уже есть)
+COPY build ./build
 
 # Открываем порт
 EXPOSE 3001
