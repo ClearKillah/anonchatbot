@@ -18,14 +18,26 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
   useEffect(() => {
     const handleFocus = () => {
       setIsKeyboardVisible(true);
-      // Даем время для появления клавиатуры, затем прокручиваем
+      // Задержка для того, чтобы клавиатура успела появиться
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        
+        // Прокручиваем viewport чтобы поле ввода оставалось видимым
+        if (inputRef.current) {
+          window.scrollTo({
+            top: document.body.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
       }, 300);
     };
 
     const handleBlur = () => {
       setIsKeyboardVisible(false);
+      // Возвращаем скролл в нормальное положение
+      setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 100);
     };
 
     const inputElement = inputRef.current;
@@ -34,13 +46,25 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
       inputElement.addEventListener('blur', handleBlur);
     }
 
+    // Обрабатываем изменение размера окна (для поворота устройства)
+    const handleResize = () => {
+      if (isKeyboardVisible) {
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+
     return () => {
       if (inputElement) {
         inputElement.removeEventListener('focus', handleFocus);
         inputElement.removeEventListener('blur', handleBlur);
       }
+      window.removeEventListener('resize', handleResize);
     };
-  }, []);
+  }, [isKeyboardVisible]);
 
   // Обработка нажатия на область сообщений для скрытия клавиатуры
   const handleMessagesClick = () => {
@@ -103,6 +127,15 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
     }
   };
 
+  // Добавляем функцию автоматической регулировки высоты поля ввода
+  const handleInputChange = (e) => {
+    setInputText(e.target.value);
+    
+    // Адаптация высоты поля ввода к содержимому
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
+  };
+
   return (
     <div className="chat-window">
       <div className="chat-header">
@@ -155,11 +188,15 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
             ref={inputRef}
             type="text"
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            onChange={handleInputChange}
             placeholder="Введите сообщение..."
             autoComplete="off"
+            autoCorrect="on"
+            spellCheck="true"
           />
-          <button type="submit">Отправить</button>
+          <button type="submit">
+            {inputText.trim() ? 'Отправить' : '→'}
+          </button>
         </form>
         
         <button className="end-chat-button" onClick={onEndChat}>
