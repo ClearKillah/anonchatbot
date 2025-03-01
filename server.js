@@ -62,7 +62,7 @@ io.on('connection', (socket) => {
   // Отправляем подтверждение подключения клиенту
   socket.emit('connectionEstablished', { message: 'Connected to server' });
   
-  // Поиск собеседника
+  // Поиск собеседника - исправленная версия
   socket.on('findChatPartner', async ({ userId, deviceId }) => {
     console.log(`User ${userId} is looking for a chat partner`);
     
@@ -100,15 +100,22 @@ io.on('connection', (socket) => {
     }
     
     // Проверяем, нет ли пользователя в очереди ожидания
-    if (waitingUsers.includes(userId)) {
+    const existingIndex = waitingUsers.findIndex(id => id === userId);
+    if (existingIndex !== -1) {
+      console.log(`User ${userId} already in waiting list`);
       socket.emit('waitingForPartner');
       return;
     }
     
+    // Добавляем логирование очереди ожидания для отладки
+    console.log('Current waiting users:', waitingUsers);
+    
     // Если в очереди есть другие пользователи, подключаем к первому
     if (waitingUsers.length > 0) {
-      const partnerId = waitingUsers.shift();
+      const partnerId = waitingUsers.shift(); // Берем первого из очереди
       const partnerSocket = userSockets.get(partnerId);
+      
+      console.log(`Matching ${userId} with ${partnerId}`);
       
       if (partnerSocket) {
         // Создаем новый чат
@@ -118,6 +125,8 @@ io.on('connection', (socket) => {
         // Подключаем обоих пользователей к комнате
         socket.join(chatId);
         partnerSocket.join(chatId);
+        
+        console.log(`Created new chat ${chatId} with users ${userId} and ${partnerId}`);
         
         // Создаем запись в Firebase
         const chatRef = db.ref(`chats/${chatId}`);
@@ -130,17 +139,25 @@ io.on('connection', (socket) => {
         socket.emit('chatJoined', { chatId });
         partnerSocket.emit('chatJoined', { chatId });
         
-        console.log(`Chat ${chatId} created between ${userId} and ${partnerId}`);
+        console.log('Both users notified about new chat');
+        
+        // Удаляем обоих пользователей из списка ожидания (на всякий случай)
+        const userWaitingIndex = waitingUsers.indexOf(userId);
+        if (userWaitingIndex !== -1) {
+          waitingUsers.splice(userWaitingIndex, 1);
+        }
+        
+        return;
       } else {
-        // Если сокет партнера не найден, добавляем текущего пользователя в очередь
-        waitingUsers.push(userId);
-        socket.emit('waitingForPartner');
+        console.log(`Partner socket not found for ${partnerId}, removing from queue`);
+        // Если сокет партнера не найден, удаляем его из списка ожидания и продолжаем
       }
-    } else {
-      // Добавляем пользователя в очередь ожидания
-      waitingUsers.push(userId);
-      socket.emit('waitingForPartner');
     }
+    
+    // Если партнер не найден или нет очереди, добавляем пользователя в очередь
+    waitingUsers.push(userId);
+    console.log(`Added user ${userId} to waiting list. Current list:`, waitingUsers);
+    socket.emit('waitingForPartner');
   });
   
   // Отправка сообщения
@@ -280,6 +297,21 @@ io.on('connection', (socket) => {
       }
     }
   });
+
+  // Добавьте этот код в обработчики socket.io на сервере
+  socket.on('cancelSearch', ({ userId }) => {
+    console.log(`User ${userId} canceled search`);
+    
+    // Удаляем пользователя из списка ожидания
+    const index = waitingUsers.indexOf(userId);
+    if (index !== -1) {
+      waitingUsers.splice(index, 1);
+      console.log(`Removed user ${userId} from waiting list`);
+    }
+    
+    // Сообщаем клиенту, что поиск отменен
+    socket.emit('searchCanceled');
+  });
 });
 
 // Обработка команды /start для Telegram бота
@@ -375,6 +407,74 @@ server.listen(PORT, () => {
     }
   }, 3000); // 3 секунды задержки, чтобы убедиться, что предыдущие соединения закрыты
 });
+
+// Добавьте эту функцию после создания socket.io сервера
+function logActiveChats() {
+  console.log('=== DEBUG INFO ===');
+  console.log(`Active pairs: ${activeChats.size}`);
+  console.log(`Waiting users: ${waitingUsers.length}`);
+  if (waitingUsers.length > 0) {
+    console.log('Waiting users list:', waitingUsers);
+  }
+  
+  // Если есть 2+ пользователя в списке ожидания, но они не соединены, это ошибка
+  if (waitingUsers.length >= 2) {
+    console.log('WARNING: Multiple users waiting but not connected!');
+    
+    // Пытаемся решить проблему, соединяя первых двух пользователей
+    attemptToFixWaitingQueue();
+  }
+}
+
+// Функция для исправления застрявшей очереди
+async function attemptToFixWaitingQueue() {
+  if (waitingUsers.length < 2) return;
+  
+  console.log('Attempting to fix waiting queue...');
+  
+  const userId1 = waitingUsers.shift();
+  const userId2 = waitingUsers.shift();
+  
+  const socket1 = userSockets.get(userId1);
+  const socket2 = userSockets.get(userId2);
+  
+  if (!socket1 || !socket2) {
+    console.log('One of the sockets not found, cannot fix');
+    
+    // Возвращаем пользователей в очередь, если их сокеты валидны
+    if (socket1) waitingUsers.push(userId1);
+    if (socket2) waitingUsers.push(userId2);
+    
+    return;
+  }
+  
+  // Создаем новый чат
+  const chatId = nanoid();
+  activeChats.set(chatId, [userId1, userId2]);
+  
+  // Подключаем обоих пользователей к комнате
+  socket1.join(chatId);
+  socket2.join(chatId);
+  
+  console.log(`Fixed queue: Created new chat ${chatId} with users ${userId1} and ${userId2}`);
+  
+  // Создаем запись в Firebase
+  const chatRef = db.ref(`chats/${chatId}`);
+  await chatRef.set({
+    createdAt: admin.database.ServerValue.TIMESTAMP,
+    participants: [userId1, userId2],
+    autoFixed: true // Отмечаем, что это автоматически исправленный чат
+  });
+  
+  // Отправляем уведомления обоим пользователям
+  socket1.emit('chatJoined', { chatId });
+  socket2.emit('chatJoined', { chatId });
+  
+  console.log('Both users notified about fixed chat');
+}
+
+// Запускаем периодическую проверку состояния
+setInterval(logActiveChats, 10000); // Каждые 10 секунд
 
 // Измененная обработка остановки приложения
 const gracefulShutdown = () => {

@@ -45,6 +45,7 @@ const App = () => {
   const deviceId = useRef(getDeviceId());
   const socketConnected = useRef(false);
   const messagesRef = useRef(null);
+  const [waitingTime, setWaitingTime] = useState(0);
   
   // Инициализация соединения с сервером
   useEffect(() => {
@@ -182,14 +183,29 @@ const App = () => {
     };
   }, [socket, userId, appendMsg, resetList]);
 
+  // Добавьте таймер ожидания
+  useEffect(() => {
+    let waitingTimer;
+    if (isWaiting) {
+      waitingTimer = setInterval(() => {
+        setWaitingTime(prevTime => prevTime + 1);
+      }, 1000);
+    } else {
+      setWaitingTime(0);
+    }
+    
+    return () => {
+      if (waitingTimer) clearInterval(waitingTimer);
+    };
+  }, [isWaiting]);
+
   // Функция поиска собеседника
   const findChatPartner = () => {
     if (!socket || !userId || !socketConnected.current) {
-      setError('Не удается подключиться к серверу. Попробуйте позже.');
+      setError("Ошибка: соединение с сервером отсутствует");
       return;
     }
     
-    resetList();
     setIsWaiting(true);
     setError(null);
     
@@ -198,6 +214,17 @@ const App = () => {
       userId,
       deviceId: deviceId.current
     });
+    
+    // Добавляем таймаут для автоматического повторного поиска, если долго нет ответа
+    setTimeout(() => {
+      if (isWaiting) {
+        console.log('Search timeout, retrying...');
+        socket.emit('findChatPartner', {
+          userId,
+          deviceId: deviceId.current
+        });
+      }
+    }, 15000); // 15 секунд таймаут
   };
 
   // Функция отправки сообщения
@@ -286,10 +313,15 @@ const App = () => {
           <div className="waiting-screen">
             <h2>Поиск собеседника...</h2>
             <div className="loader"></div>
+            <p className="waiting-time">Время ожидания: {waitingTime} сек.</p>
+            {waitingTime > 30 && (
+              <p className="hint">Советуем отменить поиск и попробовать снова</p>
+            )}
             <button 
               onClick={() => {
                 setIsWaiting(false);
                 setChatId(null);
+                socket.emit('cancelSearch', { userId });
               }}
               className="cancel-button"
             >

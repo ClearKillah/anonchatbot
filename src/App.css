@@ -240,4 +240,19 @@
 .disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.waiting-time {
+  margin-top: 15px;
+  color: #666;
+  font-size: 14px;
+}
+
+.hint {
+  color: #ff6d00;
+  font-size: 14px;
+  margin-top: 5px;
+  margin-bottom: 15px;
+  max-width: 80%;
+  text-align: center;
 } 
