@@ -10,8 +10,8 @@ COPY server ./server
 # Устанавливаем зависимости для сервера
 RUN cd server && npm install
 
-# Копируем собранное React приложение (если оно у вас уже есть)
-COPY build ./build
+# Создаем пустую директорию build для совместимости с кодом
+RUN mkdir -p build
 
 # Открываем порт
 EXPOSE 3001
