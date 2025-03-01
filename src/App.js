@@ -34,18 +34,6 @@ const App = () => {
   let isFetching = false;
   let lastFetchTime = 0;
 
-  // Добавляем состояние для отслеживания отправленных сообщений
-  const [sentMessages, setSentMessages] = useState(() => {
-    // Загружаем из localStorage при инициализации
-    const saved = localStorage.getItem('anonchat_sent_messages');
-    return saved ? JSON.parse(saved) : {};
-  });
-
-  // Сохраняем отправленные сообщения в localStorage
-  useEffect(() => {
-    localStorage.setItem('anonchat_sent_messages', JSON.stringify(sentMessages));
-  }, [sentMessages]);
-
   useEffect(() => {
     // Инициализация Telegram WebApp
     const telegram = window.Telegram.WebApp;
@@ -155,18 +143,16 @@ const App = () => {
     };
   }, [tg, chatId, userId]);
 
-  // Модифицируем интервал опроса с учетом активности приложения
+  // Восстанавливаем интервал опроса
   useEffect(() => {
-    if (chatId && userId && isAppActive) {
+    if (chatId && userId) {
       // Сначала получаем все сообщения
-      fetchMessagesWithDebounce();
+      fetchMessages();
       
-      // Запускаем опрос сервера каждые 10 секунд, только если приложение активно
+      // Запускаем опрос сервера каждые 5 секунд
       const interval = setInterval(() => {
-        if (isAppActive) {
-          fetchMessagesWithDebounce();
-        }
-      }, 10000);
+        fetchMessages();
+      }, 5000);
       
       setPollingInterval(interval);
       
@@ -177,12 +163,8 @@ const App = () => {
           setPollingInterval(null);
         }
       };
-    } else if (pollingInterval && !isAppActive) {
-      // Останавливаем опрос, если приложение неактивно
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
     }
-  }, [chatId, userId, isAppActive]);
+  }, [chatId, userId]);
 
   // Добавляем логирование для отладки
   useEffect(() => {
@@ -208,9 +190,8 @@ const App = () => {
     }
   };
 
-  // Полностью переработанная функция получения сообщений
+  // Упрощенная функция получения сообщений
   const fetchMessages = async () => {
-    console.log('Fetching messages...');
     // Проверяем, есть ли активный чат и ID пользователя
     if (!chatId || !userId) return;
     
@@ -230,33 +211,16 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
-        console.log('Received messages from server:', data.messages);
         // Создаем Map из существующих сообщений для быстрого поиска
         const existingMessagesMap = new Map();
         
-        // Сначала добавляем все ID сообщений
         messages.forEach(msg => {
           existingMessagesMap.set(String(msg.id), true);
         });
         
-        // Затем добавляем комбинации текст+отправитель для всех сообщений
-        messages.forEach(msg => {
-          const contentKey = `${msg.text}_${msg.sender}`;
-          existingMessagesMap.set(contentKey, true);
-        });
-        
         // Фильтруем только новые сообщения
         const newMessages = data.messages
-          .filter(serverMsg => {
-            // Проверяем, нет ли сообщения с таким ID
-            if (existingMessagesMap.has(String(serverMsg.id))) return false;
-            
-            // Проверяем, нет ли сообщения с таким же текстом и отправителем
-            const contentKey = `${serverMsg.text}_${serverMsg.sender === userId ? 'me' : 'other'}`;
-            if (existingMessagesMap.has(contentKey)) return false;
-            
-            return true;
-          })
+          .filter(serverMsg => !existingMessagesMap.has(String(serverMsg.id)))
           .map(msg => ({
             id: msg.id,
             text: msg.text,
@@ -266,7 +230,7 @@ const App = () => {
           }));
         
         if (newMessages.length > 0) {
-          console.log('New messages to add:', newMessages);
+          console.log('Adding new messages:', newMessages);
           // Добавляем только новые сообщения
           setMessages(prev => [...prev, ...newMessages]);
           
@@ -275,8 +239,6 @@ const App = () => {
           if (lastMsg) {
             setLastMessageId(lastMsg.id);
           }
-        } else {
-          console.log('No new messages to add');
         }
       }
     } catch (error) {
@@ -315,33 +277,15 @@ const App = () => {
     }
   };
 
-  // Полностью переработанная функция отправки сообщений
+  // Упрощенная функция отправки сообщений
   const sendMessage = async (text) => {
     console.log('Sending message:', text);
     
-    // Проверяем, не отправляется ли уже сообщение
-    if (isSending || !text.trim() || !chatId) return;
-    
-    // Создаем уникальный ключ для сообщения
-    const messageKey = `${chatId}_${text}_${Date.now()}`;
-    
-    // Проверяем, не отправляли ли мы уже это сообщение
-    if (sentMessages[messageKey]) {
-      console.log('Message already sent:', text);
-      return;
-    }
-    
-    // Отмечаем сообщение как отправленное
-    setSentMessages(prev => ({
-      ...prev,
-      [messageKey]: true
-    }));
-    
-    // Устанавливаем флаг отправки
-    setIsSending(true);
+    // Базовые проверки
+    if (!text.trim() || !chatId || !userId) return;
     
     // Генерируем уникальный ID для сообщения
-    const clientMessageId = `${DEVICE_ID}_${SESSION_ID}_${Date.now()}`;
+    const clientMessageId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     // Добавляем сообщение локально
     const newMessage = {
@@ -349,18 +293,11 @@ const App = () => {
       text,
       sender: 'me',
       timestamp: new Date().toISOString(),
-      pending: true,
-      locallyAdded: true
+      pending: true
     };
     
     // Добавляем сообщение в локальный стейт
     setMessages(prev => [...prev, newMessage]);
-    
-    // Останавливаем опрос сообщений
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
-    }
     
     try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
@@ -415,21 +352,6 @@ const App = () => {
           msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
         )
       );
-    } finally {
-      setIsSending(false);
-      
-      // Восстанавливаем опрос сообщений через 3 секунды
-      setTimeout(() => {
-        if (!pollingInterval && chatId && userId) {
-          const newInterval = setInterval(() => {
-            if (isAppActive && !isSending) {
-              fetchMessagesWithDebounce();
-            }
-          }, 10000);
-          
-          setPollingInterval(newInterval);
-        }
-      }, 3000);
     }
   };
 

@@ -50,10 +50,7 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
   const handleSubmit = (e) => {
     e.preventDefault();
     
-    // Предотвращаем множественные отправки
-    if (isSubmitting || !inputText.trim()) return;
-    
-    setIsSubmitting(true);
+    if (!inputText.trim()) return;
     
     // Сохраняем текст сообщения и очищаем поле ввода
     const messageText = inputText;
@@ -62,13 +59,10 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
     // Отправляем сообщение
     onSendMessage(messageText);
     
-    // Сбрасываем флаг отправки через небольшую задержку
+    // Фокусируемся на поле ввода после отправки
     setTimeout(() => {
-      setIsSubmitting(false);
-      
-      // Фокусируемся на поле ввода после отправки
       inputRef.current?.focus();
-    }, 500);
+    }, 100);
   };
 
   // Добавляем обработчик для повторной отправки сообщений с ошибкой

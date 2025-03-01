@@ -95,7 +95,7 @@ app.post('/api/find-chat-partner', (req, res) => {
   });
 });
 
-// Обновляем API для отправки сообщений
+// Упрощенная обработка отправки сообщений
 app.post('/api/send-message', (req, res) => {
   const { chatId, userId, message, clientMessageId, deviceId, sessionId } = req.body;
   
@@ -112,59 +112,6 @@ app.post('/api/send-message', (req, res) => {
   if (!participants.includes(userId)) {
     return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
   }
-  
-  // Создаем уникальный ключ для устройства и сессии
-  const deviceSessionKey = `${deviceId || 'unknown'}_${sessionId || 'unknown'}`;
-  
-  // Проверяем, не отправляло ли это устройство такое сообщение в этой сессии
-  if (deviceId && sessionId) {
-    if (!deviceMessages.has(deviceSessionKey)) {
-      deviceMessages.set(deviceSessionKey, new Set());
-    }
-    
-    const messagesSet = deviceMessages.get(deviceSessionKey);
-    const messageKey = `${chatId}_${message}`;
-    
-    if (messagesSet.has(messageKey)) {
-      console.log(`Duplicate message from device ${deviceId}, session ${sessionId}: ${message}`);
-      
-      // Находим существующее сообщение
-      let existingMessageId = null;
-      if (chatMessages.has(chatId)) {
-        const existingMessages = chatMessages.get(chatId);
-        const existingMessage = existingMessages.find(msg => 
-          msg.text === message && 
-          msg.sender === userId && 
-          Date.now() - new Date(msg.timestamp).getTime() < 60000
-        );
-        
-        if (existingMessage) {
-          existingMessageId = existingMessage.id;
-        }
-      }
-      
-      if (existingMessageId) {
-        return res.status(200).json({ 
-          success: true, 
-          message: 'Message already sent', 
-          recipientId: participants.find(id => id !== userId),
-          messageObj: {
-            id: existingMessageId,
-            text: message,
-            sender: userId,
-            timestamp: new Date().toISOString(),
-            clientMessageId
-          }
-        });
-      }
-    }
-    
-    // Добавляем сообщение в набор отправленных с этого устройства
-    messagesSet.add(messageKey);
-  }
-  
-  // Добавляем сообщение в кэш недавних сообщений
-  recentMessages.set(messageKey, Date.now());
   
   // Находим ID получателя
   const recipientId = participants.find(id => id !== userId);
