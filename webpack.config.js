@@ -5,7 +5,7 @@ module.exports = {
   entry: './src/index.js',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'bundle.js',
+    filename: 'bundle.[contenthash].js',
     publicPath: '/'
   },
   module: {
@@ -31,8 +31,10 @@ module.exports = {
       template: './public/index.html'
     })
   ],
-  devServer: {
-    historyApiFallback: true,
-    port: 3000
+  resolve: {
+    extensions: ['.js', '.jsx']
+  },
+  performance: {
+    hints: false
   }
 }; 
