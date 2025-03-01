@@ -2,6 +2,22 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 import ChatWindow from './components/ChatWindow';
 import WaitingScreen from './components/WaitingScreen';
+import { v4 as uuidv4 } from 'uuid';
+
+// Создаем уникальный ID сессии при загрузке приложения
+const SESSION_ID = uuidv4();
+
+// Получаем или создаем уникальный ID устройства
+const getDeviceId = () => {
+  let deviceId = localStorage.getItem('anonchat_device_id');
+  if (!deviceId) {
+    deviceId = uuidv4();
+    localStorage.setItem('anonchat_device_id', deviceId);
+  }
+  return deviceId;
+};
+
+const DEVICE_ID = getDeviceId();
 
 const App = () => {
   const [userId, setUserId] = useState(null);
@@ -17,6 +33,18 @@ const App = () => {
   // Переменные для отслеживания состояния запросов
   let isFetching = false;
   let lastFetchTime = 0;
+
+  // Добавляем состояние для отслеживания отправленных сообщений
+  const [sentMessages, setSentMessages] = useState(() => {
+    // Загружаем из localStorage при инициализации
+    const saved = localStorage.getItem('anonchat_sent_messages');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  // Сохраняем отправленные сообщения в localStorage
+  useEffect(() => {
+    localStorage.setItem('anonchat_sent_messages', JSON.stringify(sentMessages));
+  }, [sentMessages]);
 
   useEffect(() => {
     // Инициализация Telegram WebApp
@@ -287,30 +315,33 @@ const App = () => {
     }
   };
 
+  // Полностью переработанная функция отправки сообщений
   const sendMessage = async (text) => {
     console.log('Sending message:', text);
     
     // Проверяем, не отправляется ли уже сообщение
     if (isSending || !text.trim() || !chatId) return;
     
+    // Создаем уникальный ключ для сообщения
+    const messageKey = `${chatId}_${text}_${Date.now()}`;
+    
+    // Проверяем, не отправляли ли мы уже это сообщение
+    if (sentMessages[messageKey]) {
+      console.log('Message already sent:', text);
+      return;
+    }
+    
+    // Отмечаем сообщение как отправленное
+    setSentMessages(prev => ({
+      ...prev,
+      [messageKey]: true
+    }));
+    
     // Устанавливаем флаг отправки
     setIsSending(true);
     
-    // Генерируем уникальный ID для сообщения с префиксом для отличия от серверных ID
-    const clientMessageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Проверяем, не отправляли ли мы уже такое сообщение недавно
-    const isDuplicate = messages.some(msg => 
-      msg.text === text && 
-      msg.sender === 'me' && 
-      Date.now() - new Date(msg.timestamp).getTime() < 10000
-    );
-    
-    if (isDuplicate) {
-      console.log('Preventing duplicate message:', text);
-      setIsSending(false);
-      return;
-    }
+    // Генерируем уникальный ID для сообщения
+    const clientMessageId = `${DEVICE_ID}_${SESSION_ID}_${Date.now()}`;
     
     // Добавляем сообщение локально
     const newMessage = {
@@ -319,14 +350,13 @@ const App = () => {
       sender: 'me',
       timestamp: new Date().toISOString(),
       pending: true,
-      // Добавляем флаг, чтобы отметить, что это сообщение уже отправлено локально
       locallyAdded: true
     };
     
     // Добавляем сообщение в локальный стейт
     setMessages(prev => [...prev, newMessage]);
     
-    // Важно: останавливаем опрос сообщений перед отправкой
+    // Останавливаем опрос сообщений
     if (pollingInterval) {
       clearInterval(pollingInterval);
       setPollingInterval(null);
@@ -342,19 +372,21 @@ const App = () => {
           chatId,
           userId,
           message: text,
-          clientMessageId
+          clientMessageId,
+          deviceId: DEVICE_ID,
+          sessionId: SESSION_ID
         }),
       });
       
       const data = await response.json();
       
       if (data.success) {
-        // Обновляем локальное сообщение, заменяя клиентский ID на серверный
+        // Обновляем локальное сообщение
         setMessages(prev => 
           prev.map(msg => 
             msg.id === clientMessageId ? { 
               ...msg, 
-              id: data.messageObj.id, // Используем ID с сервера
+              id: data.messageObj.id,
               pending: false,
               serverConfirmed: true
             } : msg
@@ -363,9 +395,13 @@ const App = () => {
         
         // Устанавливаем ID последнего сообщения
         setLastMessageId(data.messageObj.id);
+        
+        // Вручную запрашиваем новые сообщения через 1 секунду
+        setTimeout(() => {
+          fetchMessages();
+        }, 1000);
       } else {
         console.error('Error sending message:', data.message);
-        // Помечаем сообщение как не отправленное
         setMessages(prev => 
           prev.map(msg => 
             msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
@@ -374,27 +410,26 @@ const App = () => {
       }
     } catch (error) {
       console.error('Error sending message:', error);
-      // Помечаем сообщение как не отправленное
       setMessages(prev => 
         prev.map(msg => 
           msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
         )
       );
     } finally {
-      // Сбрасываем флаг отправки
       setIsSending(false);
       
-      // Важно: восстанавливаем опрос сообщений после отправки в любом случае
-      // Используем setTimeout, чтобы дать серверу время обработать сообщение
+      // Восстанавливаем опрос сообщений через 3 секунды
       setTimeout(() => {
-        const newInterval = setInterval(() => {
-          if (isAppActive) {
-            fetchMessagesWithDebounce();
-          }
-        }, 10000);
-        
-        setPollingInterval(newInterval);
-      }, 2000);
+        if (!pollingInterval && chatId && userId) {
+          const newInterval = setInterval(() => {
+            if (isAppActive && !isSending) {
+              fetchMessagesWithDebounce();
+            }
+          }, 10000);
+          
+          setPollingInterval(newInterval);
+        }
+      }, 3000);
     }
   };
 
@@ -492,6 +527,13 @@ const App = () => {
     }
   };
 
+  // Добавляем кнопку для ручного обновления сообщений
+  const manualRefresh = () => {
+    if (!isFetching) {
+      fetchMessages();
+    }
+  };
+
   return (
     <div className="app">
       <header className="app-header">
@@ -507,6 +549,7 @@ const App = () => {
             onSendMessage={sendMessage} 
             onEndChat={endChat} 
             onRetryMessage={retryMessage}
+            onRefresh={manualRefresh}
           />
         ) : (
           <div className="loading">Загрузка...</div>

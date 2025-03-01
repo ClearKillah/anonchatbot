@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './ChatWindow.css';
 
-const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage }) => {
+const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefresh }) => {
   const [inputText, setInputText] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const messagesEndRef = useRef(null);
@@ -111,6 +111,12 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage }) => {
 
   return (
     <div className="chat-window">
+      <div className="chat-header">
+        <button className="refresh-button" onClick={onRefresh}>
+          🔄 Обновить
+        </button>
+      </div>
+      
       <div 
         className="chat-messages" 
         ref={chatMessagesRef}
