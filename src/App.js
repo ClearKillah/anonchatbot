@@ -1,47 +1,53 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, set, onValue, push } from "firebase/database";
+import Chat, { Bubble, useMessages } from '@chatui/core';
+import '@chatui/core/dist/index.css';
+import { nanoid } from 'nanoid';
+import io from 'socket.io-client';
 import './App.css';
-import ChatWindow from './components/ChatWindow';
 import WaitingScreen from './components/WaitingScreen';
-import { v4 as uuidv4 } from 'uuid';
 
-// Создаем уникальный ID сессии при загрузке приложения
-const SESSION_ID = uuidv4();
+// Firebase конфигурация (создайте проект в Firebase Console)
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT.firebaseio.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
 
-// Получаем или создаем уникальный ID устройства
+// Инициализация Firebase
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
+
+// Создаем уникальный идентификатор устройства
 const getDeviceId = () => {
   let deviceId = localStorage.getItem('anonchat_device_id');
   if (!deviceId) {
-    deviceId = uuidv4();
+    deviceId = nanoid();
     localStorage.setItem('anonchat_device_id', deviceId);
   }
   return deviceId;
 };
 
-const DEVICE_ID = getDeviceId();
-
 const App = () => {
+  // Telegram WebApp API
+  const [tg, setTg] = useState(null);
   const [userId, setUserId] = useState(null);
   const [chatId, setChatId] = useState(null);
   const [isWaiting, setIsWaiting] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [lastMessageId, setLastMessageId] = useState(null);
-  const [tg, setTg] = useState(null);
-  const [pollingInterval, setPollingInterval] = useState(null);
-  const [isAppActive, setIsAppActive] = useState(true);
-  const [isSending, setIsSending] = useState(false);
+  const [socket, setSocket] = useState(null);
+  const [status, setStatus] = useState('connecting');
+  const { messages, appendMsg, setTyping, resetList } = useMessages([]);
+  const deviceId = useRef(getDeviceId());
+  const socketConnected = useRef(false);
+  const messagesRef = useRef(null);
 
-  // Переменные для отслеживания состояния запросов
-  let isFetching = false;
-  let lastFetchTime = 0;
-
-  // Добавляем блокировку для предотвращения параллельных операций
-  const [isProcessing, setIsProcessing] = useState(false);
-
-  // Добавляем локальное хранилище для отслеживания отправленных сообщений
-  const sentTextsRef = useRef(new Set());
-
+  // Инициализация Telegram WebApp
   useEffect(() => {
-    // Инициализация Telegram WebApp
     const telegram = window.Telegram.WebApp;
     setTg(telegram);
     
@@ -50,25 +56,17 @@ const App = () => {
       setUserId(telegram.initDataUnsafe.user.id);
     } else {
       // Для тестирования, если не в Telegram
-      setUserId(`user_${Date.now()}`);
+      setUserId(`user_${nanoid(8)}`);
     }
     
     // Настраиваем WebApp
     if (telegram) {
-      // Расширяем приложение на весь экран
       telegram.expand();
       
-      // Запрашиваем полноэкранный режим, если поддерживается
-      if (telegram.isVersionAtLeast('8.0') && telegram.requestFullscreen) {
+      if (telegram.isVersionAtLeast('8.0')) {
         telegram.requestFullscreen();
       }
       
-      // Отключаем вертикальные свайпы для предотвращения случайного закрытия
-      if (telegram.isVersionAtLeast('7.7') && telegram.disableVerticalSwipes) {
-        telegram.disableVerticalSwipes();
-      }
-      
-      // Устанавливаем цвета для лучшего отображения
       if (telegram.setHeaderColor) {
         telegram.setHeaderColor('#0088cc');
       }
@@ -79,392 +77,193 @@ const App = () => {
       
       telegram.ready();
     }
-  }, []);
 
-  // Добавляем обработчик событий для полноэкранного режима
-  useEffect(() => {
-    if (tg && tg.isVersionAtLeast('8.0')) {
-      const handleFullscreenChanged = () => {
-        console.log('Fullscreen mode changed:', tg.isFullscreen);
-      };
-      
-      tg.onEvent('fullscreenChanged', handleFullscreenChanged);
-      
-      return () => {
-        tg.offEvent('fullscreenChanged', handleFullscreenChanged);
-      };
-    }
-  }, [tg]);
+    // Инициализация Socket.IO
+    const socketClient = io('https://your-socket-server.com', {
+      reconnectionAttempts: 5,
+      timeout: 10000
+    });
 
-  useEffect(() => {
-    // Ищем собеседника, когда у нас есть userId
-    if (userId) {
-      findChatPartner();
-    }
-  }, [userId]);
+    socketClient.on('connect', () => {
+      socketConnected.current = true;
+      setStatus('connected');
+    });
 
-  // Обработка событий жизненного цикла приложения
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      const isVisible = document.visibilityState === 'visible';
-      setIsAppActive(isVisible);
-      
-      if (isVisible && chatId && userId) {
-        // При возвращении к приложению сбрасываем состояние запросов
-        isFetching = false;
-        lastFetchTime = 0;
+    socketClient.on('disconnect', () => {
+      socketConnected.current = false;
+      setStatus('disconnected');
+    });
+
+    socketClient.on('newMessage', (msg) => {
+      if (msg.chatId === chatId) {
+        appendMsg({
+          type: msg.senderId === userId ? 'text' : 'received',
+          content: { text: msg.text },
+          position: msg.senderId === userId ? 'right' : 'left',
+          user: { id: msg.senderId },
+          _id: msg.id
+        });
       }
-    };
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // Обработка событий Telegram WebApp
-    if (tg && tg.isVersionAtLeast('8.0')) {
-      const handleActivated = () => {
-        console.log('App activated');
-        setIsAppActive(true);
-        
-        // Сбрасываем состояние запросов при активации
-        isFetching = false;
-        lastFetchTime = 0;
-      };
-      
-      const handleDeactivated = () => {
-        console.log('App deactivated');
-        setIsAppActive(false);
-      };
-      
-      tg.onEvent('activated', handleActivated);
-      tg.onEvent('deactivated', handleDeactivated);
-      
-      return () => {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        tg.offEvent('activated', handleActivated);
-        tg.offEvent('deactivated', handleDeactivated);
-      };
-    }
-    
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [tg, chatId, userId]);
+    });
 
-  // Удаляем интервал опроса и делаем только ручное обновление
-  useEffect(() => {
-    if (chatId && userId) {
-      // Выполняем запрос сообщений только один раз при подключении к чату
-      fetchMessages();
-      
-      // Очищаем интервал при размонтировании
-      return () => {
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          setPollingInterval(null);
-        }
-      };
-    }
-  }, [chatId, userId]);
-
-  // Добавляем логирование для отладки
-  useEffect(() => {
-    console.log('Current messages:', messages);
-  }, [messages]);
-
-  // Функция для получения сообщений с блокировкой
-  const fetchMessages = async () => {
-    // Предотвращаем параллельные запросы
-    if (isProcessing || !chatId || !userId) return;
-    
-    // Блокируем все операции на время получения сообщений
-    setIsProcessing(true);
-    
-    try {
-      const response = await fetch('https://anonchatbot-production.up.railway.app/api/get-messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId,
-          userId,
-          lastMessageId: lastMessageId
-        }),
+    socketClient.on('chatJoined', (data) => {
+      setChatId(data.chatId);
+      setIsWaiting(false);
+      resetList();
+      appendMsg({
+        type: 'system',
+        content: { text: 'Чат начат. Вы подключены к собеседнику.' }
       });
-      
-      const data = await response.json();
-      
-      if (data.success && data.messages && data.messages.length > 0) {
-        // Создаем Map из существующих сообщений
-        const existingIds = new Set(messages.map(msg => String(msg.id)));
-        
-        // Фильтруем только новые сообщения
-        const newMessages = data.messages
-          .filter(serverMsg => !existingIds.has(String(serverMsg.id)))
-          .map(msg => ({
-            id: msg.id,
-            text: msg.text,
-            sender: msg.sender === userId ? 'me' : 'other',
-            timestamp: msg.timestamp,
-            serverConfirmed: true
-          }));
-        
-        if (newMessages.length > 0) {
-          console.log('Adding new messages:', newMessages.length);
-          // Добавляем только новые сообщения
-          setMessages(prev => [...prev, ...newMessages]);
-          
-          // Обновляем ID последнего сообщения
-          const lastMsg = data.messages[data.messages.length - 1];
-          if (lastMsg) {
-            setLastMessageId(lastMsg.id);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching messages:', error);
-    } finally {
-      // Разблокируем операции
-      setIsProcessing(false);
-    }
-  };
+    });
 
-  const findChatPartner = async () => {
-    try {
-      setIsWaiting(true);
-      const response = await fetch('https://anonchatbot-production.up.railway.app/api/find-chat-partner', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userId }),
+    socketClient.on('chatEnded', () => {
+      appendMsg({
+        type: 'system',
+        content: { text: 'Собеседник покинул чат.' }
       });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        if (data.chatId) {
-          setChatId(data.chatId);
-          setIsWaiting(false);
-          setMessages([]); // Очищаем сообщения при новом чате
-          setLastMessageId(null); // Сбрасываем ID последнего сообщения
-        } else if (data.waiting) {
-          // Продолжаем ждать и периодически проверяем
-          setTimeout(findChatPartner, 3000);
-        }
-      } else {
-        console.error('Error finding chat partner:', data.message);
-      }
-    } catch (error) {
-      console.error('Error finding chat partner:', error);
-    }
-  };
-
-  // Функция отправки с блокировкой
-  const sendMessage = async (text) => {
-    // Проверяем базовые условия
-    if (!text.trim() || !chatId || !userId || isProcessing) return;
-    
-    // Проверяем, не отправляли ли мы уже такое сообщение недавно
-    const textKey = `${text}_${Date.now()}`.substring(0, 100);
-    if (sentTextsRef.current.has(text)) {
-      console.log('Message already sent recently:', text);
-      return;
-    }
-    
-    // Добавляем текст в множество отправленных на 10 секунд
-    sentTextsRef.current.add(text);
-    setTimeout(() => {
-      sentTextsRef.current.delete(text);
-    }, 10000);
-    
-    // Блокируем все операции на время отправки
-    setIsProcessing(true);
-    
-    // Генерируем уникальный ID
-    const clientMessageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Добавляем сообщение локально
-    const newMessage = {
-      id: clientMessageId,
-      text,
-      sender: 'me',
-      timestamp: new Date().toISOString(),
-      pending: true
-    };
-    
-    setMessages(prev => [...prev, newMessage]);
-    
-    try {
-      const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId,
-          userId,
-          message: text,
-          clientMessageId
-        }),
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        // Обновляем сообщение
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === clientMessageId ? { 
-              ...msg, 
-              id: data.messageObj.id,
-              pending: false,
-              serverConfirmed: true
-            } : msg
-          )
-        );
-        
-        // После успешной отправки запрашиваем новые сообщения
-        await fetchMessages();
-      } else {
-        console.error('Error sending message:', data.message);
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
-          )
-        );
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
-        )
-      );
-    } finally {
-      // Разблокируем операции независимо от результата
-      setIsProcessing(false);
-    }
-  };
-
-  const endChat = async () => {
-    try {
-      await fetch('https://anonchatbot-production.up.railway.app/api/end-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chatId,
-          userId,
-        }),
-      });
-      
-      // Сбрасываем состояние и ищем нового собеседника
       setChatId(null);
-      setMessages([]);
-      findChatPartner();
-      
-      // Очищаем интервал опроса при завершении чата
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
-      }
-    } catch (error) {
-      console.error('Error ending chat:', error);
-    }
-  };
+    });
 
-  // Добавляем функцию для повторной отправки сообщений с ошибкой
-  const retryMessage = async (messageId) => {
-    // Находим сообщение с ошибкой
-    const messageToRetry = messages.find(msg => msg.id === messageId && msg.error);
-    
-    if (!messageToRetry) return;
-    
-    // Обновляем статус сообщения на "отправляется"
-    setMessages(prev => 
-      prev.map(msg => 
-        msg.id === messageId ? { ...msg, error: false, pending: true } : msg
-      )
-    );
-    
-    try {
-      const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chatId,
-          userId,
-          message: messageToRetry.text,
-          clientMessageId: messageId
-        }),
+    setSocket(socketClient);
+
+    return () => {
+      socketClient.disconnect();
+    };
+  }, [appendMsg, resetList]);
+
+  // Ищем собеседника когда у нас есть userId
+  useEffect(() => {
+    if (userId && socket && socketConnected.current) {
+      findChatPartner();
+    }
+  }, [userId, socket, socketConnected.current]);
+
+  // Подписываемся на сообщения из Firebase для данного чата
+  useEffect(() => {
+    if (chatId) {
+      const chatRef = ref(database, `chats/${chatId}/messages`);
+      const unsubscribe = onValue(chatRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          const messageList = Object.entries(data).map(([key, value]) => ({
+            ...value,
+            _id: key,
+            type: value.senderId === userId ? 'text' : 'received',
+            position: value.senderId === userId ? 'right' : 'left',
+            content: { text: value.text }
+          }));
+          
+          // Удаляем дубликаты перед добавлением в UI
+          const existingIds = new Set(messages.map(m => m._id));
+          const newMessages = messageList.filter(m => !existingIds.has(m._id));
+          
+          newMessages.forEach(msg => {
+            appendMsg(msg);
+          });
+        }
       });
       
-      const data = await response.json();
-      
-      if (data.success) {
-        // Обновляем локальное сообщение, заменяя клиентский ID на серверный
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === messageId ? { 
-              ...msg, 
-              id: data.messageObj.id, // Используем ID с сервера
-              pending: false,
-              error: false,
-              serverConfirmed: true
-            } : msg
-          )
-        );
-        
-        // Устанавливаем ID последнего сообщения
-        setLastMessageId(data.messageObj.id);
-      } else {
-        console.error('Error retrying message:', data.message);
-        // Помечаем сообщение как не отправленное
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === messageId ? { ...msg, error: true, pending: false } : msg
-          )
-        );
-      }
-    } catch (error) {
-      console.error('Error retrying message:', error);
-      // Помечаем сообщение как не отправленное
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === messageId ? { ...msg, error: true, pending: false } : msg
-        )
-      );
+      return () => {
+        unsubscribe();
+      };
     }
+  }, [chatId, userId, appendMsg, messages]);
+
+  const findChatPartner = () => {
+    if (!userId || !socket) return;
+    
+    setIsWaiting(true);
+    socket.emit('findChatPartner', { userId, deviceId: deviceId.current });
+    
+    appendMsg({
+      type: 'system',
+      content: { text: 'Поиск собеседника...' }
+    });
   };
 
-  // Добавляем кнопку для ручного обновления сообщений
-  const manualRefresh = () => {
-    if (!isFetching) {
-      fetchMessages();
-    }
+  const handleSend = (type, content) => {
+    if (!socket || !chatId || !userId) return;
+    
+    const messageId = nanoid();
+    
+    // Добавляем сообщение в локальный интерфейс
+    appendMsg({
+      _id: messageId,
+      type: 'text',
+      content: { text: content.text },
+      position: 'right',
+      user: { id: userId }
+    });
+    
+    // Отправляем через Socket.IO для мгновенной доставки
+    socket.emit('sendMessage', {
+      id: messageId,
+      chatId,
+      senderId: userId,
+      text: content.text,
+      timestamp: Date.now(),
+      deviceId: deviceId.current
+    });
+    
+    // Дублируем в Firebase для надежности
+    const newMessageRef = push(ref(database, `chats/${chatId}/messages`));
+    set(newMessageRef, {
+      id: messageId,
+      senderId: userId,
+      text: content.text,
+      timestamp: Date.now()
+    });
   };
 
+  const handleEndChat = () => {
+    if (!socket || !chatId) return;
+    
+    socket.emit('endChat', { chatId, userId });
+    setChatId(null);
+    resetList();
+    findChatPartner();
+  };
+
+  // Рендеринг интерфейса с использованием ChatUI
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>Анонимный чат</h1>
-      </header>
-      
-      <main className="app-main">
-        {isWaiting && !chatId ? (
-          <WaitingScreen onCancel={() => setIsWaiting(false)} />
-        ) : chatId ? (
-          <ChatWindow 
-            messages={messages} 
-            onSendMessage={sendMessage} 
-            onEndChat={endChat} 
-            onRetryMessage={retryMessage}
-            onRefresh={manualRefresh}
-            isProcessing={isProcessing}
-          />
+    <div className="app-container">
+      <div className="chat-container">
+        {!chatId && !isWaiting ? (
+          <div className="welcome-screen">
+            <h1>Анонимный чат</h1>
+            <p>Нажмите кнопку, чтобы начать чат с незнакомцем</p>
+            <button 
+              onClick={findChatPartner}
+              className="start-button"
+              disabled={!socketConnected.current}
+            >
+              Найти собеседника
+            </button>
+            <div className="connection-status">
+              Статус: {status === 'connected' ? 'Подключен' : 'Ожидание подключения...'}
+            </div>
+          </div>
         ) : (
-          <div className="loading">Загрузка...</div>
+          <Chat
+            navbar={{
+              title: isWaiting ? 'Поиск собеседника...' : 'Анонимный чат',
+              leftContent: !isWaiting && (
+                <button onClick={handleEndChat} className="end-chat-button">
+                  Завершить
+                </button>
+              )
+            }}
+            messages={messages}
+            renderMessageContent={(msg) => (
+              <Bubble content={msg.content.text} />
+            )}
+            onSend={handleSend}
+            locale="ru"
+            placeholder="Введите сообщение..."
+            messagesRef={messagesRef}
+          />
         )}
-      </main>
+      </div>
     </div>
   );
 };

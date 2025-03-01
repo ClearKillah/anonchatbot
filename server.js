@@ -1,11 +1,34 @@
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const { Telegraf } = require('telegraf');
 const cors = require('cors');
 const path = require('path');
+const admin = require('firebase-admin');
+const { nanoid } = require('nanoid');
 
+// Инициализация Firebase Admin
+admin.initializeApp({
+  credential: admin.credential.cert({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+  }),
+  databaseURL: process.env.FIREBASE_DATABASE_URL
+});
+
+const db = admin.database();
+
+// Настройка express
 const app = express();
-const PORT = process.env.PORT || 3000;
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
 
 // Middleware
 app.use(cors());
@@ -15,31 +38,197 @@ app.use(express.static(path.join(__dirname, 'dist')));
 // Инициализация бота
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Хранилище для анонимных чатов и сообщений
-const activeChats = new Map();
+// Хранилища для чатов и пользователей
 const waitingUsers = [];
-const chatMessages = new Map(); // Хранилище сообщений для каждого чата
+const activeChats = new Map();
+const userSockets = new Map();
+const recentMessages = new Set();
 
-// Добавляем кэш для отслеживания недавно отправленных сообщений
-const recentMessages = new Map();
-
-// Добавляем хранилище для отслеживания сообщений по устройствам и сессиям
-const deviceMessages = new Map();
-
-// Функция для очистки старых записей из кэша
-const cleanupRecentMessages = () => {
-  const now = Date.now();
-  for (const [key, timestamp] of recentMessages.entries()) {
-    if (now - timestamp > 30000) { // Удаляем записи старше 30 секунд
-      recentMessages.delete(key);
+// WebSocket с Socket.IO
+io.on('connection', (socket) => {
+  console.log('New client connected', socket.id);
+  
+  // Поиск собеседника
+  socket.on('findChatPartner', async ({ userId, deviceId }) => {
+    console.log(`User ${userId} is looking for a chat partner`);
+    
+    // Сохраняем связь между сокетом и пользователем
+    userSockets.set(userId, socket);
+    
+    // Проверяем, не в активном ли чате пользователь
+    for (const [chatId, participants] of activeChats.entries()) {
+      if (participants.includes(userId)) {
+        // Пользователь уже в чате, подключаем его к существующему
+        socket.join(chatId);
+        socket.emit('chatJoined', { chatId });
+        
+        // Получаем историю сообщений из Firebase
+        const chatRef = db.ref(`chats/${chatId}/messages`);
+        const snapshot = await chatRef.once('value');
+        const messages = snapshot.val() || {};
+        
+        // Отправляем историю сообщений
+        Object.values(messages).forEach(msg => {
+          socket.emit('newMessage', msg);
+        });
+        
+        return;
+      }
     }
-  }
-};
+    
+    // Если в ожидании есть другие пользователи, создаем чат
+    if (waitingUsers.length > 0) {
+      const partnerId = waitingUsers.shift();
+      
+      // Не создаем чат с самим собой
+      if (partnerId === userId) {
+        waitingUsers.push(userId);
+        return;
+      }
+      
+      const chatId = `chat_${nanoid()}`;
+      activeChats.set(chatId, [userId, partnerId]);
+      
+      // Записываем новый чат в Firebase
+      await db.ref(`chats/${chatId}`).set({
+        created: Date.now(),
+        participants: [userId, partnerId]
+      });
+      
+      // Подключаем обоих пользователей к комнате чата
+      socket.join(chatId);
+      
+      const partnerSocket = userSockets.get(partnerId);
+      if (partnerSocket) {
+        partnerSocket.join(chatId);
+        partnerSocket.emit('chatJoined', { chatId });
+      }
+      
+      socket.emit('chatJoined', { chatId });
+    } else {
+      // Если других ожидающих нет, добавляем в очередь
+      if (!waitingUsers.includes(userId)) {
+        waitingUsers.push(userId);
+      }
+    }
+  });
+  
+  // Обработка отправки сообщений
+  socket.on('sendMessage', async (message) => {
+    const { id, chatId, senderId, text, timestamp, deviceId } = message;
+    
+    // Проверяем принадлежность к чату
+    const participants = activeChats.get(chatId);
+    if (!participants || !participants.includes(senderId)) {
+      return;
+    }
+    
+    // Создаем уникальный ключ для обнаружения дубликатов
+    const messageKey = `${chatId}_${senderId}_${text}_${deviceId}`;
+    
+    // Защита от дублирования сообщений
+    if (recentMessages.has(messageKey)) {
+      console.log('Duplicate message detected');
+      return;
+    }
+    
+    // Добавляем в набор недавних сообщений
+    recentMessages.add(messageKey);
+    setTimeout(() => {
+      recentMessages.delete(messageKey);
+    }, 30000); // Удаляем через 30 секунд
+    
+    // Сохраняем сообщение в Firebase
+    await db.ref(`chats/${chatId}/messages/${id}`).set({
+      id,
+      senderId,
+      text,
+      timestamp
+    });
+    
+    // Отправляем сообщение всем в комнате чата
+    io.to(chatId).emit('newMessage', {
+      id,
+      chatId,
+      senderId,
+      text,
+      timestamp
+    });
+  });
+  
+  // Завершение чата
+  socket.on('endChat', async ({ chatId, userId }) => {
+    const participants = activeChats.get(chatId);
+    if (!participants || !participants.includes(userId)) {
+      return;
+    }
+    
+    // Уведомляем другого участника
+    const partnerId = participants.find(id => id !== userId);
+    const partnerSocket = userSockets.get(partnerId);
+    if (partnerSocket) {
+      partnerSocket.emit('chatEnded');
+    }
+    
+    // Очищаем ресурсы
+    activeChats.delete(chatId);
+    
+    // Помечаем чат как завершенный в Firebase
+    await db.ref(`chats/${chatId}`).update({
+      ended: Date.now(),
+      endedBy: userId
+    });
+  });
+  
+  // Отключение пользователя
+  socket.on('disconnect', () => {
+    console.log('Client disconnected', socket.id);
+    
+    // Ищем пользователя, связанного с этим сокетом
+    let disconnectedUserId = null;
+    for (const [userId, userSocket] of userSockets.entries()) {
+      if (userSocket === socket) {
+        disconnectedUserId = userId;
+        userSockets.delete(userId);
+        break;
+      }
+    }
+    
+    // Удаляем из списка ожидания, если был там
+    const waitingIndex = waitingUsers.indexOf(disconnectedUserId);
+    if (waitingIndex !== -1) {
+      waitingUsers.splice(waitingIndex, 1);
+    }
+    
+    // Проверяем, был ли пользователь в чате
+    if (disconnectedUserId) {
+      for (const [chatId, participants] of activeChats.entries()) {
+        if (participants.includes(disconnectedUserId)) {
+          // Уведомляем другого участника
+          const partnerId = participants.find(id => id !== disconnectedUserId);
+          const partnerSocket = userSockets.get(partnerId);
+          if (partnerSocket) {
+            partnerSocket.emit('chatEnded');
+          }
+          
+          // Очищаем ресурсы
+          activeChats.delete(chatId);
+          
+          // Помечаем чат как завершенный
+          db.ref(`chats/${chatId}`).update({
+            ended: Date.now(),
+            endedBy: disconnectedUserId,
+            endReason: 'disconnect'
+          });
+          
+          break;
+        }
+      }
+    }
+  });
+});
 
-// Запускаем очистку кэша каждую минуту
-setInterval(cleanupRecentMessages, 60000);
-
-// Обработка команды /start
+// Обработка команды /start для Telegram бота
 bot.start((ctx) => {
   ctx.reply('Добро пожаловать в анонимный чат! Нажмите на кнопку ниже, чтобы открыть чат.', {
     reply_markup: {
@@ -50,173 +239,14 @@ bot.start((ctx) => {
   });
 });
 
-// API для поиска собеседника
-app.post('/api/find-chat-partner', (req, res) => {
-  const { userId } = req.body;
-  
-  if (!userId) {
-    return res.status(400).json({ success: false, message: 'User ID is required' });
-  }
-  
-  // Проверяем, не находится ли пользователь уже в чате
-  for (const [chatId, participants] of activeChats.entries()) {
-    if (participants.includes(userId)) {
-      return res.status(200).json({ 
-        success: true, 
-        chatId, 
-        message: 'You are already in a chat' 
-      });
-    }
-  }
-  
-  // Если есть ожидающие пользователи, создаем чат
-  if (waitingUsers.length > 0 && waitingUsers[0] !== userId) {
-    const partnerId = waitingUsers.shift();
-    const chatId = `chat_${Date.now()}`;
-    
-    activeChats.set(chatId, [userId, partnerId]);
-    
-    return res.status(200).json({ 
-      success: true, 
-      chatId, 
-      message: 'Chat partner found' 
-    });
-  }
-  
-  // Если нет ожидающих пользователей, добавляем текущего в очередь
-  if (!waitingUsers.includes(userId)) {
-    waitingUsers.push(userId);
-  }
-  
-  return res.status(200).json({ 
-    success: true, 
-    waiting: true, 
-    message: 'Waiting for a chat partner' 
-  });
-});
-
-// Строгая проверка дубликатов на сервере
-app.post('/api/send-message', (req, res) => {
-  const { chatId, userId, message, clientMessageId } = req.body;
-  
-  if (!chatId || !userId || !message) {
-    return res.status(400).json({ success: false, message: 'Chat ID, User ID and message are required' });
-  }
-  
-  // Проверяем наличие чата и участников
-  const participants = activeChats.get(chatId);
-  if (!participants || !participants.includes(userId)) {
-    return res.status(403).json({ success: false, message: 'Invalid chat or participant' });
-  }
-  
-  // Строгая проверка дубликатов - ищем существующее сообщение с таким же содержанием
-  if (chatMessages.has(chatId)) {
-    const existingMessages = chatMessages.get(chatId);
-    const duplicate = existingMessages.find(msg => 
-      msg.text === message && 
-      msg.sender === userId && 
-      new Date() - new Date(msg.timestamp) < 30000 // 30 секунд
-    );
-    
-    if (duplicate) {
-      console.log('Duplicate message detected:', message);
-      return res.status(200).json({
-        success: true,
-        message: 'Message already sent',
-        messageObj: duplicate
-      });
-    }
-  }
-  
-  // Создаем новое сообщение с уникальным ID
-  const messageObj = {
-    id: Date.now() + Math.floor(Math.random() * 1000),
-    text: message,
-    sender: userId,
-    timestamp: new Date().toISOString(),
-    clientMessageId
-  };
-  
-  // Сохраняем сообщение
-  if (chatMessages.has(chatId)) {
-    chatMessages.get(chatId).push(messageObj);
-  } else {
-    chatMessages.set(chatId, [messageObj]);
-  }
-  
-  return res.status(200).json({
-    success: true,
-    message: 'Message sent',
-    messageObj
-  });
-});
-
-// Новый API для получения сообщений
-app.post('/api/get-messages', (req, res) => {
-  const { chatId, userId, lastMessageId } = req.body;
-  
-  if (!chatId || !userId) {
-    return res.status(400).json({ success: false, message: 'Chat ID and User ID are required' });
-  }
-  
-  const participants = activeChats.get(chatId);
-  
-  if (!participants) {
-    return res.status(404).json({ success: false, message: 'Chat not found' });
-  }
-  
-  if (!participants.includes(userId)) {
-    return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
-  }
-  
-  // Получаем сообщения для данного чата
-  const messages = chatMessages.get(chatId) || [];
-  
-  // Если указан lastMessageId, возвращаем только новые сообщения
-  let newMessages = messages;
-  if (lastMessageId) {
-    const lastIndex = messages.findIndex(msg => msg.id === parseInt(lastMessageId));
-    if (lastIndex !== -1) {
-      newMessages = messages.slice(lastIndex + 1);
-    }
-  }
-  
-  return res.status(200).json({ 
-    success: true, 
-    messages: newMessages
-  });
-});
-
-// API для завершения чата
-app.post('/api/end-chat', (req, res) => {
-  const { chatId, userId } = req.body;
-  
-  if (!chatId || !userId) {
-    return res.status(400).json({ success: false, message: 'Chat ID and User ID are required' });
-  }
-  
-  const participants = activeChats.get(chatId);
-  
-  if (!participants) {
-    return res.status(404).json({ success: false, message: 'Chat not found' });
-  }
-  
-  if (!participants.includes(userId)) {
-    return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
-  }
-  
-  // Удаляем чат и его сообщения
-  activeChats.delete(chatId);
-  chatMessages.delete(chatId);
-  
-  return res.status(200).json({ 
-    success: true, 
-    message: 'Chat ended' 
-  });
+// Настраиваем роутинг для SPA
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 // Запуск сервера и бота
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   bot.launch().then(() => {
     console.log('Bot is running');
@@ -226,5 +256,11 @@ app.listen(PORT, () => {
 });
 
 // Обработка остановки приложения
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM')); 
+process.once('SIGINT', () => {
+  bot.stop('SIGINT');
+  server.close();
+});
+process.once('SIGTERM', () => {
+  bot.stop('SIGTERM');
+  server.close();
+}); 

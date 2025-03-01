@@ -80,4 +80,107 @@
   .app-header {
     padding-top: calc(10px + env(safe-area-inset-top, 0px));
   }
+}
+
+.app-container {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-container {
+  flex: 1;
+  position: relative;
+  height: 100%;
+}
+
+.welcome-screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  text-align: center;
+  background-color: #f5f8fb;
+}
+
+.welcome-screen h1 {
+  color: #0088cc;
+  margin-bottom: 20px;
+}
+
+.start-button {
+  margin-top: 30px;
+  padding: 12px 24px;
+  background-color: #0088cc;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  transition: background-color 0.2s;
+}
+
+.start-button:hover {
+  background-color: #006ba1;
+}
+
+.start-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.connection-status {
+  margin-top: 20px;
+  color: #666;
+  font-size: 14px;
+}
+
+.end-chat-button {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 5px;
+}
+
+/* Переопределение стилей ChatUI для лучшей интеграции с Telegram */
+.ChatApp {
+  height: 100% !important;
+  background-color: #f5f8fb !important;
+}
+
+.ChatApp .Navbar {
+  background-color: #0088cc !important;
+}
+
+.MessageContainer {
+  background-color: #f5f8fb !important;
+  padding-bottom: 80px !important;
+}
+
+.Composer {
+  background-color: white !important;
+  border-top: 1px solid #e6e6e6 !important;
+  padding-bottom: env(safe-area-inset-bottom) !important;
+}
+
+.Message.Message--right .Bubble {
+  background-color: #dcf8c6 !important;
+}
+
+.Message.Message--left .Bubble {
+  background-color: white !important;
+}
+
+/* Фиксы для iPhone X и новее */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .Composer {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom)) !important;
+  }
 } 
