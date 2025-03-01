@@ -12,6 +12,10 @@ const App = () => {
   const [tg, setTg] = useState(null);
   const [pollingInterval, setPollingInterval] = useState(null);
 
+  // Переменные для отслеживания состояния запросов
+  let isFetching = false;
+  let lastFetchTime = 0;
+
   useEffect(() => {
     // Инициализация Telegram WebApp
     const telegram = window.Telegram.WebApp;
@@ -75,21 +79,9 @@ const App = () => {
     }
   }, [userId]);
 
-  // Оптимизируем интервал опроса с дебаунсингом
+  // Оптимизируем интервал опроса
   useEffect(() => {
     if (chatId && userId) {
-      // Переменная для отслеживания, выполняется ли запрос в данный момент
-      let isFetching = false;
-      
-      // Функция для получения сообщений с дебаунсингом
-      const fetchMessagesWithDebounce = async () => {
-        if (isFetching) return;
-        
-        isFetching = true;
-        await fetchMessages();
-        isFetching = false;
-      };
-      
       // Сначала получаем все сообщения
       fetchMessagesWithDebounce();
       
@@ -135,11 +127,37 @@ const App = () => {
     }
   }, [tg, chatId, userId]);
 
-  const fetchMessages = async () => {
+  // Добавляем логирование для отладки
+  useEffect(() => {
+    console.log('Current messages:', messages);
+  }, [messages]);
+
+  // Функция для получения сообщений с дебаунсингом
+  const fetchMessagesWithDebounce = async () => {
+    const now = Date.now();
+    
+    // Предотвращаем слишком частые запросы (не чаще чем раз в 5 секунд)
+    if (isFetching || now - lastFetchTime < 5000) return;
+    
+    isFetching = true;
+    lastFetchTime = now;
+    
     try {
-      // Проверяем, есть ли активный чат и ID пользователя
-      if (!chatId || !userId) return;
-      
+      await fetchMessages();
+    } catch (error) {
+      console.error('Error in fetchMessagesWithDebounce:', error);
+    } finally {
+      isFetching = false;
+    }
+  };
+
+  // Полностью переработанная функция получения сообщений
+  const fetchMessages = async () => {
+    console.log('Fetching messages...');
+    // Проверяем, есть ли активный чат и ID пользователя
+    if (!chatId || !userId) return;
+    
+    try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/get-messages', {
         method: 'POST',
         headers: {
@@ -155,34 +173,30 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
+        console.log('Received messages from server:', data.messages);
         // Создаем Map из существующих сообщений для быстрого поиска
         const existingMessagesMap = new Map();
         
+        // Сначала добавляем все ID сообщений
         messages.forEach(msg => {
-          // Сохраняем как по ID, так и по тексту+времени для поиска дубликатов
-          existingMessagesMap.set(msg.id, true);
-          
-          // Для сообщений с временными ID также проверяем текст и примерное время
-          if (msg.locallyAdded) {
-            const key = `${msg.text}_${new Date(msg.timestamp).getTime()}`;
-            existingMessagesMap.set(key, true);
-          }
+          existingMessagesMap.set(String(msg.id), true);
+        });
+        
+        // Затем добавляем комбинации текст+отправитель для всех сообщений
+        messages.forEach(msg => {
+          const contentKey = `${msg.text}_${msg.sender}`;
+          existingMessagesMap.set(contentKey, true);
         });
         
         // Фильтруем только новые сообщения
         const newMessages = data.messages
           .filter(serverMsg => {
             // Проверяем, нет ли сообщения с таким ID
-            if (existingMessagesMap.has(serverMsg.id)) return false;
+            if (existingMessagesMap.has(String(serverMsg.id))) return false;
             
-            // Проверяем, нет ли локального сообщения с таким же текстом и близким временем
-            const msgTime = new Date(serverMsg.timestamp).getTime();
-            
-            // Проверяем в диапазоне ±5 секунд для учета разницы в часах
-            for (let i = -5; i <= 5; i++) {
-              const timeKey = `${serverMsg.text}_${msgTime + i * 1000}`;
-              if (existingMessagesMap.has(timeKey)) return false;
-            }
+            // Проверяем, нет ли сообщения с таким же текстом и отправителем
+            const contentKey = `${serverMsg.text}_${serverMsg.sender === userId ? 'me' : 'other'}`;
+            if (existingMessagesMap.has(contentKey)) return false;
             
             return true;
           })
@@ -195,6 +209,7 @@ const App = () => {
           }));
         
         if (newMessages.length > 0) {
+          console.log('New messages to add:', newMessages);
           // Добавляем только новые сообщения
           setMessages(prev => [...prev, ...newMessages]);
           
@@ -203,6 +218,8 @@ const App = () => {
           if (lastMsg) {
             setLastMessageId(lastMsg.id);
           }
+        } else {
+          console.log('No new messages to add');
         }
       }
     } catch (error) {
@@ -242,14 +259,15 @@ const App = () => {
   };
 
   const sendMessage = async (text) => {
+    console.log('Sending message:', text);
     if (!text.trim() || !chatId) return;
     
     // Генерируем уникальный ID для сообщения с префиксом для отличия от серверных ID
-    const messageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const clientMessageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     // Добавляем сообщение локально
     const newMessage = {
-      id: messageId,
+      id: clientMessageId,
       text,
       sender: 'me',
       timestamp: new Date().toISOString(),
@@ -261,6 +279,12 @@ const App = () => {
     // Добавляем сообщение в локальный стейт
     setMessages(prev => [...prev, newMessage]);
     
+    // Важно: останавливаем опрос сообщений перед отправкой
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      setPollingInterval(null);
+    }
+    
     try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
         method: 'POST',
@@ -271,7 +295,7 @@ const App = () => {
           chatId,
           userId,
           message: text,
-          clientMessageId: messageId // Передаем клиентский ID сообщения
+          clientMessageId
         }),
       });
       
@@ -281,7 +305,7 @@ const App = () => {
         // Обновляем локальное сообщение, заменяя клиентский ID на серверный
         setMessages(prev => 
           prev.map(msg => 
-            msg.id === messageId ? { 
+            msg.id === clientMessageId ? { 
               ...msg, 
               id: data.messageObj.id, // Используем ID с сервера
               pending: false,
@@ -297,7 +321,7 @@ const App = () => {
         // Помечаем сообщение как не отправленное
         setMessages(prev => 
           prev.map(msg => 
-            msg.id === messageId ? { ...msg, error: true, pending: false } : msg
+            msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
           )
         );
       }
@@ -306,9 +330,19 @@ const App = () => {
       // Помечаем сообщение как не отправленное
       setMessages(prev => 
         prev.map(msg => 
-          msg.id === messageId ? { ...msg, error: true, pending: false } : msg
+          msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
         )
       );
+    } finally {
+      // Важно: восстанавливаем опрос сообщений после отправки в любом случае
+      // Используем setTimeout, чтобы дать серверу время обработать сообщение
+      setTimeout(() => {
+        const newInterval = setInterval(() => {
+          fetchMessagesWithDebounce();
+        }, 10000);
+        
+        setPollingInterval(newInterval);
+      }, 2000);
     }
   };
 
@@ -414,12 +448,13 @@ const App = () => {
       
       <main className="app-main">
         {isWaiting && !chatId ? (
-          <WaitingScreen />
+          <WaitingScreen onCancel={() => setIsWaiting(false)} />
         ) : chatId ? (
           <ChatWindow 
             messages={messages} 
             onSendMessage={sendMessage} 
             onEndChat={endChat} 
+            onRetryMessage={retryMessage}
           />
         ) : (
           <div className="loading">Загрузка...</div>

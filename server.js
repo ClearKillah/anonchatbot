@@ -97,36 +97,66 @@ app.post('/api/send-message', (req, res) => {
   // Находим ID получателя
   const recipientId = participants.find(id => id !== userId);
   
-  // Создаем объект сообщения с серверным ID
+  // Проверяем, не существует ли уже сообщение с таким клиентским ID или содержимым
+  let messageExists = false;
+  let existingMessageId = null;
+  
+  if (chatMessages.has(chatId)) {
+    const existingMessages = chatMessages.get(chatId);
+    
+    // Ищем сообщение с таким же клиентским ID или содержимым
+    const existingMessage = existingMessages.find(msg => 
+      // Проверяем по клиентскому ID
+      (msg.clientMessageId && msg.clientMessageId === clientMessageId) || 
+      // Или по содержимому и отправителю с временным окном в 10 секунд
+      (msg.text === message && msg.sender === userId && 
+       Math.abs(new Date() - new Date(msg.timestamp)) < 10000)
+    );
+    
+    if (existingMessage) {
+      messageExists = true;
+      existingMessageId = existingMessage.id;
+    }
+  }
+  
+  // Если сообщение уже существует, возвращаем его ID
+  if (messageExists && existingMessageId) {
+    console.log(`Message already exists: ${message} from ${userId}`);
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Message already sent', 
+      recipientId,
+      messageObj: {
+        id: existingMessageId,
+        text: message,
+        sender: userId,
+        timestamp: new Date().toISOString(),
+        clientMessageId
+      }
+    });
+  }
+  
+  // Создаем новое сообщение с уникальным ID
   const messageObj = {
-    id: Date.now(), // Серверный ID
+    id: Date.now() + Math.floor(Math.random() * 1000), // Добавляем случайность для уникальности
     text: message,
     sender: userId,
     timestamp: new Date().toISOString(),
     clientMessageId // Сохраняем клиентский ID для отслеживания
   };
   
-  // Проверяем, не существует ли уже сообщение с таким клиентским ID
-  let messageExists = false;
+  console.log(`New message: ${message} from ${userId} with ID ${messageObj.id}`);
   
+  // Сохраняем сообщение
   if (chatMessages.has(chatId)) {
-    const existingMessages = chatMessages.get(chatId);
-    messageExists = existingMessages.some(msg => 
-      msg.clientMessageId === clientMessageId || 
-      (msg.text === message && msg.sender === userId && 
-       Math.abs(new Date(msg.timestamp) - new Date(messageObj.timestamp)) < 5000)
-    );
-    
-    if (!messageExists) {
-      chatMessages.get(chatId).push(messageObj);
-    }
+    chatMessages.get(chatId).push(messageObj);
   } else {
     chatMessages.set(chatId, [messageObj]);
   }
   
   return res.status(200).json({ 
     success: true, 
-    message: messageExists ? 'Message already sent' : 'Message sent', 
+    message: 'Message sent', 
     recipientId,
     messageObj
   });
