@@ -23,7 +23,7 @@ function Chat() {
 
   const fetchMessages = async () => {
     try {
-      const response = await fetch('https://testos-production.up.railway.app/messages');
+      const response = await fetch('https://anonchatbot-production.up.railway.app/messages');
       const data = await response.json();
       setMessages(data);
     } catch (error) {
@@ -35,7 +35,7 @@ function Chat() {
     e.preventDefault();
     if (newMessage.trim()) {
       try {
-        const response = await fetch('https://testos-production.up.railway.app/messages', {
+        const response = await fetch('https://anonchatbot-production.up.railway.app/messages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
