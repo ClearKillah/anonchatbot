@@ -1,6 +1,7 @@
 {
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
   },
   "deploy": {
     "startCommand": "cd server && npm install && node index.js",
