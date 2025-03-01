@@ -166,6 +166,10 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
           Завершить чат
         </button>
       </div>
+
+      <div className="chat-status">
+        {isProcessing ? 'Синхронизация...' : 'Готово к отправке сообщений'}
+      </div>
     </div>
   );
 };

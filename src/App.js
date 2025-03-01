@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import ChatWindow from './components/ChatWindow';
 import WaitingScreen from './components/WaitingScreen';
@@ -33,6 +33,12 @@ const App = () => {
   // Переменные для отслеживания состояния запросов
   let isFetching = false;
   let lastFetchTime = 0;
+
+  // Добавляем блокировку для предотвращения параллельных операций
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Добавляем локальное хранилище для отслеживания отправленных сообщений
+  const sentTextsRef = useRef(new Set());
 
   useEffect(() => {
     // Инициализация Telegram WebApp
@@ -143,18 +149,11 @@ const App = () => {
     };
   }, [tg, chatId, userId]);
 
-  // Восстанавливаем интервал опроса
+  // Удаляем интервал опроса и делаем только ручное обновление
   useEffect(() => {
     if (chatId && userId) {
-      // Сначала получаем все сообщения
+      // Выполняем запрос сообщений только один раз при подключении к чату
       fetchMessages();
-      
-      // Запускаем опрос сервера каждые 5 секунд
-      const interval = setInterval(() => {
-        fetchMessages();
-      }, 5000);
-      
-      setPollingInterval(interval);
       
       // Очищаем интервал при размонтировании
       return () => {
@@ -171,36 +170,18 @@ const App = () => {
     console.log('Current messages:', messages);
   }, [messages]);
 
-  // Функция для получения сообщений с дебаунсингом
-  const fetchMessagesWithDebounce = async () => {
-    const now = Date.now();
-    
-    // Предотвращаем слишком частые запросы (не чаще чем раз в 5 секунд)
-    if (isFetching || now - lastFetchTime < 5000) return;
-    
-    isFetching = true;
-    lastFetchTime = now;
-    
-    try {
-      await fetchMessages();
-    } catch (error) {
-      console.error('Error in fetchMessagesWithDebounce:', error);
-    } finally {
-      isFetching = false;
-    }
-  };
-
-  // Упрощенная функция получения сообщений
+  // Функция для получения сообщений с блокировкой
   const fetchMessages = async () => {
-    // Проверяем, есть ли активный чат и ID пользователя
-    if (!chatId || !userId) return;
+    // Предотвращаем параллельные запросы
+    if (isProcessing || !chatId || !userId) return;
+    
+    // Блокируем все операции на время получения сообщений
+    setIsProcessing(true);
     
     try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/get-messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chatId,
           userId,
@@ -211,16 +192,12 @@ const App = () => {
       const data = await response.json();
       
       if (data.success && data.messages && data.messages.length > 0) {
-        // Создаем Map из существующих сообщений для быстрого поиска
-        const existingMessagesMap = new Map();
-        
-        messages.forEach(msg => {
-          existingMessagesMap.set(String(msg.id), true);
-        });
+        // Создаем Map из существующих сообщений
+        const existingIds = new Set(messages.map(msg => String(msg.id)));
         
         // Фильтруем только новые сообщения
         const newMessages = data.messages
-          .filter(serverMsg => !existingMessagesMap.has(String(serverMsg.id)))
+          .filter(serverMsg => !existingIds.has(String(serverMsg.id)))
           .map(msg => ({
             id: msg.id,
             text: msg.text,
@@ -230,7 +207,7 @@ const App = () => {
           }));
         
         if (newMessages.length > 0) {
-          console.log('Adding new messages:', newMessages);
+          console.log('Adding new messages:', newMessages.length);
           // Добавляем только новые сообщения
           setMessages(prev => [...prev, ...newMessages]);
           
@@ -243,6 +220,9 @@ const App = () => {
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
+    } finally {
+      // Разблокируем операции
+      setIsProcessing(false);
     }
   };
 
@@ -277,15 +257,29 @@ const App = () => {
     }
   };
 
-  // Упрощенная функция отправки сообщений
+  // Функция отправки с блокировкой
   const sendMessage = async (text) => {
-    console.log('Sending message:', text);
+    // Проверяем базовые условия
+    if (!text.trim() || !chatId || !userId || isProcessing) return;
     
-    // Базовые проверки
-    if (!text.trim() || !chatId || !userId) return;
+    // Проверяем, не отправляли ли мы уже такое сообщение недавно
+    const textKey = `${text}_${Date.now()}`.substring(0, 100);
+    if (sentTextsRef.current.has(text)) {
+      console.log('Message already sent recently:', text);
+      return;
+    }
     
-    // Генерируем уникальный ID для сообщения
-    const clientMessageId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Добавляем текст в множество отправленных на 10 секунд
+    sentTextsRef.current.add(text);
+    setTimeout(() => {
+      sentTextsRef.current.delete(text);
+    }, 10000);
+    
+    // Блокируем все операции на время отправки
+    setIsProcessing(true);
+    
+    // Генерируем уникальный ID
+    const clientMessageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     // Добавляем сообщение локально
     const newMessage = {
@@ -296,29 +290,24 @@ const App = () => {
       pending: true
     };
     
-    // Добавляем сообщение в локальный стейт
     setMessages(prev => [...prev, newMessage]);
     
     try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chatId,
           userId,
           message: text,
-          clientMessageId,
-          deviceId: DEVICE_ID,
-          sessionId: SESSION_ID
+          clientMessageId
         }),
       });
       
       const data = await response.json();
       
       if (data.success) {
-        // Обновляем локальное сообщение
+        // Обновляем сообщение
         setMessages(prev => 
           prev.map(msg => 
             msg.id === clientMessageId ? { 
@@ -330,13 +319,8 @@ const App = () => {
           )
         );
         
-        // Устанавливаем ID последнего сообщения
-        setLastMessageId(data.messageObj.id);
-        
-        // Вручную запрашиваем новые сообщения через 1 секунду
-        setTimeout(() => {
-          fetchMessages();
-        }, 1000);
+        // После успешной отправки запрашиваем новые сообщения
+        await fetchMessages();
       } else {
         console.error('Error sending message:', data.message);
         setMessages(prev => 
@@ -352,6 +336,9 @@ const App = () => {
           msg.id === clientMessageId ? { ...msg, error: true, pending: false } : msg
         )
       );
+    } finally {
+      // Разблокируем операции независимо от результата
+      setIsProcessing(false);
     }
   };
 

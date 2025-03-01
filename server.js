@@ -95,37 +95,47 @@ app.post('/api/find-chat-partner', (req, res) => {
   });
 });
 
-// Упрощенная обработка отправки сообщений
+// Строгая проверка дубликатов на сервере
 app.post('/api/send-message', (req, res) => {
-  const { chatId, userId, message, clientMessageId, deviceId, sessionId } = req.body;
+  const { chatId, userId, message, clientMessageId } = req.body;
   
   if (!chatId || !userId || !message) {
     return res.status(400).json({ success: false, message: 'Chat ID, User ID and message are required' });
   }
   
+  // Проверяем наличие чата и участников
   const participants = activeChats.get(chatId);
-  
-  if (!participants) {
-    return res.status(404).json({ success: false, message: 'Chat not found' });
+  if (!participants || !participants.includes(userId)) {
+    return res.status(403).json({ success: false, message: 'Invalid chat or participant' });
   }
   
-  if (!participants.includes(userId)) {
-    return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
+  // Строгая проверка дубликатов - ищем существующее сообщение с таким же содержанием
+  if (chatMessages.has(chatId)) {
+    const existingMessages = chatMessages.get(chatId);
+    const duplicate = existingMessages.find(msg => 
+      msg.text === message && 
+      msg.sender === userId && 
+      new Date() - new Date(msg.timestamp) < 30000 // 30 секунд
+    );
+    
+    if (duplicate) {
+      console.log('Duplicate message detected:', message);
+      return res.status(200).json({
+        success: true,
+        message: 'Message already sent',
+        messageObj: duplicate
+      });
+    }
   }
-  
-  // Находим ID получателя
-  const recipientId = participants.find(id => id !== userId);
   
   // Создаем новое сообщение с уникальным ID
   const messageObj = {
-    id: Date.now() + Math.floor(Math.random() * 1000), // Добавляем случайность для уникальности
+    id: Date.now() + Math.floor(Math.random() * 1000),
     text: message,
     sender: userId,
     timestamp: new Date().toISOString(),
-    clientMessageId // Сохраняем клиентский ID для отслеживания
+    clientMessageId
   };
-  
-  console.log(`New message: ${message} from ${userId} with ID ${messageObj.id}`);
   
   // Сохраняем сообщение
   if (chatMessages.has(chatId)) {
@@ -134,10 +144,9 @@ app.post('/api/send-message', (req, res) => {
     chatMessages.set(chatId, [messageObj]);
   }
   
-  return res.status(200).json({ 
-    success: true, 
-    message: 'Message sent', 
-    recipientId,
+  return res.status(200).json({
+    success: true,
+    message: 'Message sent',
     messageObj
   });
 });
