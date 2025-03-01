@@ -459,6 +459,7 @@ const App = () => {
             onEndChat={endChat} 
             onRetryMessage={retryMessage}
             onRefresh={manualRefresh}
+            isProcessing={isProcessing}
           />
         ) : (
           <div className="loading">Загрузка...</div>

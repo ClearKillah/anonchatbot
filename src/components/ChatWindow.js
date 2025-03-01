@@ -1,100 +1,49 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './ChatWindow.css';
 
-const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefresh }) => {
+const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefresh, isProcessing }) => {
   const [inputText, setInputText] = useState('');
-  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const chatMessagesRef = useRef(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Автоматическая прокрутка вниз при новых сообщениях
+  // Прокрутка к последнему сообщению
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Обработка фокуса на поле ввода
-  useEffect(() => {
-    const handleFocus = () => {
-      setIsKeyboardVisible(true);
-      // Задержка для того, чтобы клавиатура успела появиться
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        
-        // Прокручиваем viewport чтобы поле ввода оставалось видимым
-        if (inputRef.current) {
-          window.scrollTo({
-            top: document.body.scrollHeight,
-            behavior: 'smooth'
-          });
-        }
-      }, 300);
-    };
-
-    const handleBlur = () => {
-      setIsKeyboardVisible(false);
-      // Возвращаем скролл в нормальное положение
-      setTimeout(() => {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }, 100);
-    };
-
-    const inputElement = inputRef.current;
-    if (inputElement) {
-      inputElement.addEventListener('focus', handleFocus);
-      inputElement.addEventListener('blur', handleBlur);
-    }
-
-    // Обрабатываем изменение размера окна (для поворота устройства)
-    const handleResize = () => {
-      if (isKeyboardVisible) {
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
-    };
-    
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      if (inputElement) {
-        inputElement.removeEventListener('focus', handleFocus);
-        inputElement.removeEventListener('blur', handleBlur);
-      }
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [isKeyboardVisible]);
-
-  // Обработка нажатия на область сообщений для скрытия клавиатуры
+  // Обработка нажатия на область сообщений
   const handleMessagesClick = () => {
     inputRef.current?.blur();
   };
 
+  // Обработка отправки формы
   const handleSubmit = (e) => {
     e.preventDefault();
     
     if (!inputText.trim()) return;
     
-    // Сохраняем текст сообщения и очищаем поле ввода
-    const messageText = inputText;
+    // Отправка сообщения
+    onSendMessage(inputText);
     setInputText('');
     
-    // Отправляем сообщение
-    onSendMessage(messageText);
-    
-    // Фокусируемся на поле ввода после отправки
+    // Фокус на поле ввода
     setTimeout(() => {
       inputRef.current?.focus();
     }, 100);
   };
 
-  // Добавляем обработчик для повторной отправки сообщений с ошибкой
+  // Автоматическая регулировка высоты поля ввода
+  const handleInputChange = (e) => {
+    setInputText(e.target.value);
+  };
+
+  // Повторная отправка сообщения с ошибкой
   const handleRetry = (messageId) => {
     onRetryMessage(messageId);
   };
 
-  // Группируем сообщения по отправителю для лучшего отображения
+  // Группируем сообщения по отправителю
   const groupedMessages = [];
   let currentGroup = null;
 
@@ -110,7 +59,7 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
     }
   });
 
-  // Обновляем функцию для отображения статуса сообщения
+  // Отображение статуса сообщения
   const renderMessageStatus = (msg) => {
     if (msg.sender !== 'me') return null;
     
@@ -125,15 +74,6 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
     } else {
       return <span className="message-status">✓</span>;
     }
-  };
-
-  // Добавляем функцию автоматической регулировки высоты поля ввода
-  const handleInputChange = (e) => {
-    setInputText(e.target.value);
-    
-    // Адаптация высоты поля ввода к содержимому
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
   };
 
   return (
@@ -161,11 +101,10 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
               key={groupIndex} 
               className={`message-group ${group.sender === 'me' ? 'message-group-sent' : 'message-group-received'}`}
             >
-              {group.messages.map((msg, msgIndex) => (
+              {group.messages.map((msg) => (
                 <div 
                   key={msg.id} 
                   className={`message ${group.sender === 'me' ? 'message-sent' : 'message-received'} ${msg.pending ? 'message-pending' : ''} ${msg.error ? 'message-error' : ''}`}
-                  style={{ animationDelay: `${msgIndex * 0.1}s` }}
                 >
                   <div className="message-bubble">
                     <p>{msg.text}</p>
@@ -183,6 +122,10 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
       </div>
       
       <div className="chat-input-container">
+        <div className="chat-status">
+          {isProcessing ? 'Синхронизация...' : 'Готово к отправке сообщений'}
+        </div>
+        
         <form className="chat-input" onSubmit={handleSubmit}>
           <input
             ref={inputRef}
@@ -191,8 +134,6 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
             onChange={handleInputChange}
             placeholder="Введите сообщение..."
             autoComplete="off"
-            autoCorrect="on"
-            spellCheck="true"
           />
           <button type="submit">
             {inputText.trim() ? 'Отправить' : '→'}
@@ -202,10 +143,6 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage, onRefr
         <button className="end-chat-button" onClick={onEndChat}>
           Завершить чат
         </button>
-      </div>
-
-      <div className="chat-status">
-        {isProcessing ? 'Синхронизация...' : 'Готово к отправке сообщений'}
       </div>
     </div>
   );
