@@ -76,9 +76,9 @@ app.post('/api/find-chat-partner', (req, res) => {
   });
 });
 
-// API для отправки сообщений
+// Обновляем API для отправки сообщений
 app.post('/api/send-message', (req, res) => {
-  const { chatId, userId, message } = req.body;
+  const { chatId, userId, message, messageId } = req.body;
   
   if (!chatId || !userId || !message) {
     return res.status(400).json({ success: false, message: 'Chat ID, User ID and message are required' });
@@ -97,19 +97,33 @@ app.post('/api/send-message', (req, res) => {
   // Находим ID получателя
   const recipientId = participants.find(id => id !== userId);
   
-  // Создаем объект сообщения
+  // Создаем объект сообщения с переданным ID или генерируем новый
   const messageObj = {
-    id: Date.now(),
+    id: messageId || Date.now(),
     text: message,
     sender: userId,
     timestamp: new Date().toISOString()
   };
   
-  // Сохраняем сообщение в хранилище
-  if (!chatMessages.has(chatId)) {
-    chatMessages.set(chatId, []);
+  // Проверяем, не существует ли уже сообщение с таким ID
+  if (chatMessages.has(chatId)) {
+    const existingMessages = chatMessages.get(chatId);
+    const messageExists = existingMessages.some(msg => msg.id === messageObj.id);
+    
+    if (!messageExists) {
+      chatMessages.get(chatId).push(messageObj);
+    } else {
+      // Если сообщение с таким ID уже существует, просто возвращаем успех
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Message already sent', 
+        recipientId,
+        messageObj
+      });
+    }
+  } else {
+    chatMessages.set(chatId, [messageObj]);
   }
-  chatMessages.get(chatId).push(messageObj);
   
   return res.status(200).json({ 
     success: true, 

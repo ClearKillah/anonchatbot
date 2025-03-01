@@ -199,16 +199,19 @@ const App = () => {
   const sendMessage = async (text) => {
     if (!text.trim() || !chatId) return;
     
+    // Генерируем уникальный ID для сообщения
+    const messageId = Date.now();
+    
     // Добавляем сообщение локально
     const newMessage = {
-      id: Date.now(),
+      id: messageId,
       text,
       sender: 'me',
       timestamp: new Date().toISOString(),
+      pending: true // Добавляем статус ожидания отправки
     };
     
     setMessages(prev => [...prev, newMessage]);
-    setLastMessageId(newMessage.id);
     
     try {
       const response = await fetch('https://anonchatbot-production.up.railway.app/api/send-message', {
@@ -220,16 +223,39 @@ const App = () => {
           chatId,
           userId,
           message: text,
+          messageId // Передаем ID сообщения на сервер
         }),
       });
       
       const data = await response.json();
       
-      if (!data.success) {
+      if (data.success) {
+        // Обновляем статус сообщения на отправленное
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === messageId ? { ...msg, pending: false } : msg
+          )
+        );
+        
+        // Устанавливаем ID последнего сообщения только после успешной отправки
+        setLastMessageId(messageId);
+      } else {
         console.error('Error sending message:', data.message);
+        // Помечаем сообщение как не отправленное
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === messageId ? { ...msg, error: true, pending: false } : msg
+          )
+        );
       }
     } catch (error) {
       console.error('Error sending message:', error);
+      // Помечаем сообщение как не отправленное
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === messageId ? { ...msg, error: true, pending: false } : msg
+        )
+      );
     }
   };
 

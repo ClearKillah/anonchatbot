@@ -2,8 +2,11 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: -webkit-fill-available; /* Для iOS Safari */
   background-color: #f5f5f5;
   font-family: 'Roboto', sans-serif;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .app-header {
@@ -12,11 +15,18 @@
   padding: 10px 20px;
   text-align: center;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.2rem;
+  font-weight: 500;
 }
 
 .app-main {
@@ -24,6 +34,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
 .loading {
@@ -33,4 +44,33 @@
   height: 100%;
   font-size: 1.2rem;
   color: #666;
+}
+
+/* Медиа-запросы для адаптации под разные размеры экранов */
+@media (max-width: 480px) {
+  .app-header h1 {
+    font-size: 1.1rem;
+  }
+  
+  .app-header {
+    padding: 8px 15px;
+  }
+}
+
+/* Для устройств с маленькими экранами */
+@media (max-width: 320px) {
+  .app-header h1 {
+    font-size: 1rem;
+  }
+  
+  .app-header {
+    padding: 6px 10px;
+  }
+}
+
+/* Для устройств с notch (вырезом) */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .app-header {
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  }
 } 
