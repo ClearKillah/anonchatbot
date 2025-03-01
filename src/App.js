@@ -10,10 +10,10 @@ import './App.css';
 // Firebase конфигурация
 const firebaseConfig = {
   apiKey: "AIzaSyAFPXNx5HHMhPiV0FgnprIJI4TYxvxrWfE", // Демо ключ
-  authDomain: `${process.env.FIREBASE_PROJECT_ID}.firebaseapp.com`,
-  databaseURL: process.env.FIREBASE_DATABASE_URL || "https://sdnfjsidf.firebaseio.com",
-  projectId: process.env.FIREBASE_PROJECT_ID || "sdnfjsidf",
-  storageBucket: `${process.env.FIREBASE_PROJECT_ID}.appspot.com`,
+  authDomain: "sdnfjsidf.firebaseapp.com", // Используем захардкоженное значение
+  databaseURL: "https://sdnfjsidf.firebaseio.com", // Используем захардкоженное значение
+  projectId: "sdnfjsidf", // Используем захардкоженное значение
+  storageBucket: "sdnfjsidf.appspot.com",
   messagingSenderId: "110324966438883300281",
   appId: "1:110324966438883300281:web:123456789012"
 };

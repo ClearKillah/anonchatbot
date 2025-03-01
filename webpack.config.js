@@ -1,5 +1,16 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const webpack = require('webpack');
+const dotenv = require('dotenv');
+
+// Загружаем переменные окружения из .env
+const env = dotenv.config().parsed || {};
+
+// Создаем объект с переменными для клиента
+const clientEnv = {
+  'process.env.FIREBASE_PROJECT_ID': JSON.stringify(env.FIREBASE_PROJECT_ID || 'sdnfjsidf'),
+  'process.env.FIREBASE_DATABASE_URL': JSON.stringify(env.FIREBASE_DATABASE_URL || 'https://sdnfjsidf.firebaseio.com')
+};
 
 module.exports = {
   entry: './src/index.js',
@@ -29,7 +40,9 @@ module.exports = {
   plugins: [
     new HtmlWebpackPlugin({
       template: './public/index.html'
-    })
+    }),
+    // Добавляем плагин DefinePlugin для замены переменных окружения
+    new webpack.DefinePlugin(clientEnv)
   ],
   resolve: {
     extensions: ['.js', '.jsx']

@@ -313,6 +313,28 @@ app.get('/diagnostic', (req, res) => {
   `);
 });
 
+// Маршрут для проверки конфигурации клиента
+app.get('/api/config', (req, res) => {
+  res.json({
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID || 'sdnfjsidf',
+    firebaseDatabaseUrl: process.env.FIREBASE_DATABASE_URL || 'https://sdnfjsidf.firebaseio.com'
+  });
+});
+
+// Маршрут для проверки состояния сборки
+app.get('/api/build-info', (req, res) => {
+  res.json({
+    version: require('./package.json').version,
+    buildTime: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Маршрут для резервной страницы
+app.get('/fallback', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'fallback.html'));
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });

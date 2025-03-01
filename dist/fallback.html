@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Анонимный чат</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background-color: #f5f8fb;
+      text-align: center;
+    }
+    h1 {
+      color: #0088cc;
+    }
+    p {
+      margin: 20px 0;
+      max-width: 500px;
+    }
+    button {
+      background: #0088cc;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Анонимный чат</h1>
+  <p>В данный момент приложение недоступно. Пожалуйста, попробуйте позже.</p>
+  <button onclick="window.location.reload()">Попробовать снова</button>
+  
+  <script>
+    // Базовая диагностика
+    console.log('Fallback page loaded');
+    fetch('/api/status')
+      .then(res => res.json())
+      .then(data => {
+        console.log('API Status:', data);
+        document.body.innerHTML += `<p style="color:green">Сервер работает, обновите страницу</p>`;
+      })
+      .catch(err => {
+        console.error('API Error:', err);
+        document.body.innerHTML += `<p style="color:red">Ошибка соединения с сервером</p>`;
+      });
+  </script>
+</body>
+</html> 
