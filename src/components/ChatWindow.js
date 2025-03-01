@@ -7,6 +7,7 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage }) => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const chatMessagesRef = useRef(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Автоматическая прокрутка вниз при новых сообщениях
   useEffect(() => {
@@ -48,13 +49,26 @@ const ChatWindow = ({ messages, onSendMessage, onEndChat, onRetryMessage }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (inputText.trim()) {
-      onSendMessage(inputText);
-      setInputText('');
+    
+    // Предотвращаем множественные отправки
+    if (isSubmitting || !inputText.trim()) return;
+    
+    setIsSubmitting(true);
+    
+    // Сохраняем текст сообщения и очищаем поле ввода
+    const messageText = inputText;
+    setInputText('');
+    
+    // Отправляем сообщение
+    onSendMessage(messageText);
+    
+    // Сбрасываем флаг отправки через небольшую задержку
+    setTimeout(() => {
+      setIsSubmitting(false);
       
       // Фокусируемся на поле ввода после отправки
       inputRef.current?.focus();
-    }
+    }, 500);
   };
 
   // Добавляем обработчик для повторной отправки сообщений с ошибкой

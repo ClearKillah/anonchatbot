@@ -20,6 +20,22 @@ const activeChats = new Map();
 const waitingUsers = [];
 const chatMessages = new Map(); // Хранилище сообщений для каждого чата
 
+// Добавляем кэш для отслеживания недавно отправленных сообщений
+const recentMessages = new Map();
+
+// Функция для очистки старых записей из кэша
+const cleanupRecentMessages = () => {
+  const now = Date.now();
+  for (const [key, timestamp] of recentMessages.entries()) {
+    if (now - timestamp > 30000) { // Удаляем записи старше 30 секунд
+      recentMessages.delete(key);
+    }
+  }
+};
+
+// Запускаем очистку кэша каждую минуту
+setInterval(cleanupRecentMessages, 60000);
+
 // Обработка команды /start
 bot.start((ctx) => {
   ctx.reply('Добро пожаловать в анонимный чат! Нажмите на кнопку ниже, чтобы открыть чат.', {
@@ -94,47 +110,49 @@ app.post('/api/send-message', (req, res) => {
     return res.status(403).json({ success: false, message: 'You are not a participant of this chat' });
   }
   
-  // Находим ID получателя
-  const recipientId = participants.find(id => id !== userId);
+  // Создаем уникальный ключ для сообщения
+  const messageKey = `${chatId}_${userId}_${message}`;
   
-  // Проверяем, не существует ли уже сообщение с таким клиентским ID или содержимым
-  let messageExists = false;
-  let existingMessageId = null;
-  
-  if (chatMessages.has(chatId)) {
-    const existingMessages = chatMessages.get(chatId);
+  // Проверяем, не отправлялось ли такое сообщение недавно
+  if (recentMessages.has(messageKey)) {
+    console.log(`Duplicate message detected: ${message} from ${userId}`);
     
-    // Ищем сообщение с таким же клиентским ID или содержимым
-    const existingMessage = existingMessages.find(msg => 
-      // Проверяем по клиентскому ID
-      (msg.clientMessageId && msg.clientMessageId === clientMessageId) || 
-      // Или по содержимому и отправителю с временным окном в 10 секунд
-      (msg.text === message && msg.sender === userId && 
-       Math.abs(new Date() - new Date(msg.timestamp)) < 10000)
-    );
+    // Находим ID существующего сообщения
+    let existingMessageId = null;
+    if (chatMessages.has(chatId)) {
+      const existingMessages = chatMessages.get(chatId);
+      const existingMessage = existingMessages.find(msg => 
+        msg.text === message && 
+        msg.sender === userId && 
+        Date.now() - new Date(msg.timestamp).getTime() < 30000
+      );
+      
+      if (existingMessage) {
+        existingMessageId = existingMessage.id;
+      }
+    }
     
-    if (existingMessage) {
-      messageExists = true;
-      existingMessageId = existingMessage.id;
+    if (existingMessageId) {
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Message already sent', 
+        recipientId: participants.find(id => id !== userId),
+        messageObj: {
+          id: existingMessageId,
+          text: message,
+          sender: userId,
+          timestamp: new Date().toISOString(),
+          clientMessageId
+        }
+      });
     }
   }
   
-  // Если сообщение уже существует, возвращаем его ID
-  if (messageExists && existingMessageId) {
-    console.log(`Message already exists: ${message} from ${userId}`);
-    return res.status(200).json({ 
-      success: true, 
-      message: 'Message already sent', 
-      recipientId,
-      messageObj: {
-        id: existingMessageId,
-        text: message,
-        sender: userId,
-        timestamp: new Date().toISOString(),
-        clientMessageId
-      }
-    });
-  }
+  // Добавляем сообщение в кэш недавних сообщений
+  recentMessages.set(messageKey, Date.now());
+  
+  // Находим ID получателя
+  const recipientId = participants.find(id => id !== userId);
   
   // Создаем новое сообщение с уникальным ID
   const messageObj = {

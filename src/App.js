@@ -11,6 +11,8 @@ const App = () => {
   const [lastMessageId, setLastMessageId] = useState(null);
   const [tg, setTg] = useState(null);
   const [pollingInterval, setPollingInterval] = useState(null);
+  const [isAppActive, setIsAppActive] = useState(true);
+  const [isSending, setIsSending] = useState(false);
 
   // Переменные для отслеживания состояния запросов
   let isFetching = false;
@@ -79,15 +81,63 @@ const App = () => {
     }
   }, [userId]);
 
-  // Оптимизируем интервал опроса
+  // Обработка событий жизненного цикла приложения
   useEffect(() => {
-    if (chatId && userId) {
+    const handleVisibilityChange = () => {
+      const isVisible = document.visibilityState === 'visible';
+      setIsAppActive(isVisible);
+      
+      if (isVisible && chatId && userId) {
+        // При возвращении к приложению сбрасываем состояние запросов
+        isFetching = false;
+        lastFetchTime = 0;
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Обработка событий Telegram WebApp
+    if (tg && tg.isVersionAtLeast('8.0')) {
+      const handleActivated = () => {
+        console.log('App activated');
+        setIsAppActive(true);
+        
+        // Сбрасываем состояние запросов при активации
+        isFetching = false;
+        lastFetchTime = 0;
+      };
+      
+      const handleDeactivated = () => {
+        console.log('App deactivated');
+        setIsAppActive(false);
+      };
+      
+      tg.onEvent('activated', handleActivated);
+      tg.onEvent('deactivated', handleDeactivated);
+      
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        tg.offEvent('activated', handleActivated);
+        tg.offEvent('deactivated', handleDeactivated);
+      };
+    }
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [tg, chatId, userId]);
+
+  // Модифицируем интервал опроса с учетом активности приложения
+  useEffect(() => {
+    if (chatId && userId && isAppActive) {
       // Сначала получаем все сообщения
       fetchMessagesWithDebounce();
       
-      // Запускаем опрос сервера каждые 10 секунд
+      // Запускаем опрос сервера каждые 10 секунд, только если приложение активно
       const interval = setInterval(() => {
-        fetchMessagesWithDebounce();
+        if (isAppActive) {
+          fetchMessagesWithDebounce();
+        }
       }, 10000);
       
       setPollingInterval(interval);
@@ -99,33 +149,12 @@ const App = () => {
           setPollingInterval(null);
         }
       };
+    } else if (pollingInterval && !isAppActive) {
+      // Останавливаем опрос, если приложение неактивно
+      clearInterval(pollingInterval);
+      setPollingInterval(null);
     }
-  }, [chatId, userId]);
-
-  // Добавляем обработчики событий активации/деактивации
-  useEffect(() => {
-    if (tg && tg.isVersionAtLeast('8.0')) {
-      const handleActivated = () => {
-        console.log('App activated');
-        // Обновляем сообщения при активации
-        if (chatId && userId) {
-          fetchMessages();
-        }
-      };
-      
-      const handleDeactivated = () => {
-        console.log('App deactivated');
-      };
-      
-      tg.onEvent('activated', handleActivated);
-      tg.onEvent('deactivated', handleDeactivated);
-      
-      return () => {
-        tg.offEvent('activated', handleActivated);
-        tg.offEvent('deactivated', handleDeactivated);
-      };
-    }
-  }, [tg, chatId, userId]);
+  }, [chatId, userId, isAppActive]);
 
   // Добавляем логирование для отладки
   useEffect(() => {
@@ -260,10 +289,28 @@ const App = () => {
 
   const sendMessage = async (text) => {
     console.log('Sending message:', text);
-    if (!text.trim() || !chatId) return;
+    
+    // Проверяем, не отправляется ли уже сообщение
+    if (isSending || !text.trim() || !chatId) return;
+    
+    // Устанавливаем флаг отправки
+    setIsSending(true);
     
     // Генерируем уникальный ID для сообщения с префиксом для отличия от серверных ID
     const clientMessageId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Проверяем, не отправляли ли мы уже такое сообщение недавно
+    const isDuplicate = messages.some(msg => 
+      msg.text === text && 
+      msg.sender === 'me' && 
+      Date.now() - new Date(msg.timestamp).getTime() < 10000
+    );
+    
+    if (isDuplicate) {
+      console.log('Preventing duplicate message:', text);
+      setIsSending(false);
+      return;
+    }
     
     // Добавляем сообщение локально
     const newMessage = {
@@ -334,11 +381,16 @@ const App = () => {
         )
       );
     } finally {
+      // Сбрасываем флаг отправки
+      setIsSending(false);
+      
       // Важно: восстанавливаем опрос сообщений после отправки в любом случае
       // Используем setTimeout, чтобы дать серверу время обработать сообщение
       setTimeout(() => {
         const newInterval = setInterval(() => {
-          fetchMessagesWithDebounce();
+          if (isAppActive) {
+            fetchMessagesWithDebounce();
+          }
         }, 10000);
         
         setPollingInterval(newInterval);

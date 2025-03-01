@@ -10,6 +10,10 @@
   <meta name="viewport-fit" content="cover">
   <meta name="theme-color" content="#0088cc">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Добавляем мета-теги для предотвращения кэширования -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>Анонимный чат</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
@@ -49,6 +53,20 @@
     // Предотвращаем масштабирование жестами
     document.addEventListener('gesturestart', function(event) {
       event.preventDefault();
+    });
+    
+    // Предотвращаем двойные отправки форм
+    document.addEventListener('submit', function(event) {
+      const form = event.target;
+      if (form.hasAttribute('data-submitting')) {
+        event.preventDefault();
+        return false;
+      }
+      
+      form.setAttribute('data-submitting', 'true');
+      setTimeout(function() {
+        form.removeAttribute('data-submitting');
+      }, 1000);
     });
   </script>
 </body>
